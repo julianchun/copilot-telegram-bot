@@ -1,0 +1,12 @@
+[project]
+name = "copilot-cli-telegram"
+version = "0.1.0"
+description = "Using GitHub Copilot CLI on your Telegram"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-telegram-bot>=20.0",
+    "python-dotenv>=1.0.0",
+    "github-copilot-sdk>=0.1.0",
+    "pydantic>=2.0"
+]
