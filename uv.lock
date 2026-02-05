@@ -39,7 +39,7 @@ wheels = [
 ]
 
 [[package]]
-name = "copilot-telegram-bot"
+name = "copilot-cli-telegram"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

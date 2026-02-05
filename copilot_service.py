@@ -1,5 +1,9 @@
 import os
+import shutil
 import asyncio
+import time
+import uuid
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
@@ -7,6 +11,9 @@ from pydantic import BaseModel, Field
 from copilot import CopilotClient
 from copilot.tools import define_tool
 from copilot.generated.session_events import SessionEventType
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- Global Context for Tools ---
 class ServiceContext:
@@ -53,7 +60,6 @@ async def list_files(params: ListFilesParams) -> str:
     
     try:
         items = os.listdir(abs_target)
-        # Report CLI style log
         await CONTEXT.report_status(f"● List directory {params.path}\n  └ {len(items)} files found")
         
         formatted_items = []
@@ -87,7 +93,6 @@ async def read_file(params: ReadFileParams) -> str:
             lines = f.readlines()
             content = "".join(lines)
             
-            # Report CLI style log
             await CONTEXT.report_status(f"● Read {params.path}\n  └ {len(lines)} lines read")
             CONTEXT.track_file(params.path)
             
@@ -96,15 +101,6 @@ async def read_file(params: ReadFileParams) -> str:
             return content
     except Exception as e:
         return f"Error reading file: {str(e)}"
-
-# --- Service Class ---
-
-import logging
-# ... (imports)
-
-logger = logging.getLogger(__name__)
-
-# ... (ServiceContext class)
 
 # --- Service Class ---
 
@@ -120,41 +116,116 @@ class CopilotService:
     def __init__(self):
         self.client = CopilotClient({"cwd": str(CONTEXT.root_path)})
         self.session = None
+        self.session_id = str(uuid.uuid4())[:8]
         self.current_callback = None
+        self.status_callback = None
+        self.interaction_callback = None 
+        self.last_usage_info = None 
         self.current_model = "gpt-4o"
         self._is_running = False
+        self.project_selected = False # Track if a valid project is active
         
+        # Manual Stats Tracking
+        self.stats = {
+            "session_start": time.time(),
+            "api_time": 0.0,
+            "requests": 0,
+            "models": {}
+        }
+
     async def set_working_directory(self, path: str):
         p = Path(path).expanduser().resolve()
         if not p.exists():
             raise FileNotFoundError(f"Path does not exist: {path}")
         
         current_root = CONTEXT.root_path
-        
-        # Log the request
         logger.info(f"Requested CWD change: {current_root} -> {p}")
 
         if str(p) != str(current_root):
-            # 1. Update Context for Tools
             CONTEXT.set_root(p)
-            
-            # 2. Update Client with new CWD
-            # Re-initialize the client with the new CWD
             self.client = CopilotClient({"cwd": str(p)})
             logger.info(f"CopilotClient re-initialized with CWD: {p}")
 
-            # 3. Restart Client
             if self._is_running:
                 logger.info("Restarting Copilot Client to apply new CWD...")
                 await self.stop()
                 await self.start()
                 logger.info("Copilot Client restarted.")
         
+        self.project_selected = True # Mark project as selected
         return str(CONTEXT.root_path)
         
     def get_working_directory(self) -> str:
-        # Return the actual OS CWD to be sure
-        return os.getcwd()
+        return str(CONTEXT.root_path)
+        
+    def get_temp_dir(self) -> Path:
+        """Returns path to the session's temp dir, creating it if needed."""
+        p = Path(CONTEXT.root_path) / f".tmp-{self.session_id}"
+        if not p.exists():
+            p.mkdir(exist_ok=True)
+        return p
+        
+    def cleanup_temp_dir(self):
+        p = Path(CONTEXT.root_path) / f".tmp-{self.session_id}"
+        if p.exists():
+            try:
+                shutil.rmtree(p)
+                logger.info(f"Cleaned up temp dir: {p}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp dir: {e}")
+
+    def get_usage_report(self) -> str:
+        """Returns formatted usage stats mimicking Copilot CLI (Plain Text)."""
+        now = time.time()
+        d = timedelta(seconds=int(now - self.stats["session_start"]))
+        session_duration = str(d)
+        api_duration = f"{self.stats['api_time']:.1f}s"
+        requests = self.stats["requests"]
+        
+        report = (
+            f"Total usage est: {requests} Premium requests\n"
+            f"  API time spent: {api_duration}\n"
+            f"  Total session time: {session_duration}\n"
+            f"  Breakdown by AI model:\n"
+        )
+        
+        if not self.stats["models"]:
+             report += f"  (No interactions yet)"
+        else:
+            items = []
+            for model, count in self.stats["models"].items():
+                items.append(f"  {model}: {count} requests")
+            report += "\n".join(items)
+        
+        return report
+
+    async def export_session_to_file(self) -> Optional[str]:
+        """Exports the current session history to a markdown file via native /share command."""
+        if not self.session:
+            return None
+            
+        try:
+            # 1. Ask Copilot to save the conversation to a file
+            # We use a dummy content callback to prevent noise during the command execution
+            response = await self.session.send_and_wait({"prompt": "/share"})
+            
+            # The response content should contain the path
+            output_text = str(response.content) if hasattr(response, 'content') else str(response)
+            logger.info(f"Share command output: {output_text}")
+            
+            # 2. Parse the output text to find the file path
+            # Example: "Session shared successfully to: /tmp/copilot-session-xyz.md"
+            if "successfully to:" in output_text:
+                file_path = output_text.split("successfully to:")[1].strip()
+                # Clean up any potential markdown backticks or extra text
+                file_path = file_path.split("\n")[0].replace("`", "").strip()
+                return file_path
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Native export failed: {e}")
+            return None
 
     async def get_cli_version(self) -> str:
         try:
@@ -178,10 +249,31 @@ class CopilotService:
             logger.debug(f"Auth Check: {status}")
             return status.login if hasattr(status, 'login') else "User"
         except Exception as e:
-            logger.error(f"Auth Check Failed: {e}")
             return "User"
 
-    # ... (get_git_info)
+    async def get_git_info(self) -> str:
+        try:
+            root = CONTEXT.root_path
+            proc = await asyncio.create_subprocess_shell(
+                "git rev-parse --abbrev-ref HEAD",
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            branch = stdout.decode().strip()
+            if not branch: return ""
+            
+            proc = await asyncio.create_subprocess_shell(
+                "git status --porcelain",
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            dirty = "*" if stdout.decode().strip() else ""
+            return f" [⎇ {branch}{dirty}]"
+        except Exception as e:
+            return ""
 
     async def start(self):
         if not self._is_running:
@@ -198,28 +290,68 @@ class CopilotService:
 
     async def _create_session(self):
         logger.info(f"Creating new session. Model: {self.current_model}")
+        
+        async def permission_bridge(request):
+            if self.interaction_callback:
+                return await self.interaction_callback("permission", request)
+            return True 
+            
+        async def user_input_bridge(request):
+            if self.interaction_callback:
+                return await self.interaction_callback("input", request)
+            return "cancel"
+
         self.session = await self.client.create_session(
             {
                 "model": self.current_model,
                 "streaming": True,
-                "tools": [list_files, read_file]
+                "tools": [list_files, read_file],
+                "on_permission_request": permission_bridge,
+                "on_user_input_request": user_input_bridge
             }
         )
         self.session.on(self._handle_event)
         CONTEXT.read_files = []
+        
+        self.stats["session_start"] = time.time()
+        self.stats["api_time"] = 0.0
+        self.stats["requests"] = 0
+        self.stats["models"] = {}
+        
         logger.info("Session created.")
     
     async def reset_session(self, model: Optional[str] = None):
         if model:
             self.current_model = model
         logger.info("Resetting session...")
+        
+        self.cleanup_temp_dir()
+        self.session_id = str(uuid.uuid4())[:8]
+        
+        if self.session:
+            try:
+                await self.session.destroy()
+            except Exception as e:
+                logger.warning(f"Error destroying session: {e}")
+            self.session = None
+
         await self._create_session()
 
     async def stop(self):
         logger.info("Stopping Copilot Client...")
-        await self.client.stop()
-        self._is_running = False
-        self.session = None # Clear session on stop
+        self.cleanup_temp_dir()
+        
+        if self.session:
+            try:
+                await self.session.destroy()
+            except Exception as e:
+                logger.warning(f"Error destroying session during stop: {e}")
+            self.session = None
+
+        if self._is_running:
+            await self.client.stop()
+            self._is_running = False
+            
         logger.info("Copilot Client Stopped.")
 
     async def get_available_models(self) -> List[Dict[str, str]]:
@@ -239,37 +371,77 @@ class CopilotService:
     def get_context_files(self) -> List[str]:
         return CONTEXT.read_files
 
-    def get_project_structure(self, max_depth=2, limit=20) -> str:
+    def get_ls_output(self) -> str:
+        """Returns flat list of current directory content."""
         root = CONTEXT.root_path
         output = []
+        try:
+            items = sorted(root.iterdir(), key=lambda x: (not x.is_dir(), x.name))
+            filtered = [i for i in items if not i.name.startswith('.')]
+            for item in filtered:
+                if item.is_dir():
+                    output.append(f"📁 {item.name}/")
+                else:
+                    output.append(f"📄 {item.name}")
+            return "\n".join(output) if output else "(Empty)"
+        except Exception as e:
+            return f"Error: {e}"
+
+    def get_project_structure(self, max_depth=2, limit=30) -> str:
+        """Returns nested project structure with file sizes."""
+        root = CONTEXT.root_path
+        output = []
+        
+        def format_size(path: Path):
+            try:
+                size = path.stat().st_size
+                if size < 1024: return f"{size}B"
+                if size < 1024*1024: return f"{size/1024:.1f}KB"
+                return f"{size/(1024*1024):.1f}MB"
+            except: return "0B"
+
         def _scan(path: Path, prefix: str = "", depth: int = 0):
             if depth > max_depth or len(output) > limit: return
             try:
                 items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name))
                 filtered = [i for i in items if not i.name.startswith('.')]
-                for i, item in enumerate(filtered):
+                for item in filtered:
                     if len(output) >= limit: return
-                    is_last = (i == len(filtered) - 1)
-                    connector = "└── " if is_last else "├── "
-                    output.append(f"{prefix}{connector}{item.name}{'/' if item.is_dir() else ''}")
                     if item.is_dir():
-                        _scan(item, prefix + ("    " if is_last else "│   "), depth + 1)
+                        output.append(f"{prefix}📁 {item.name}/")
+                        _scan(item, prefix + "  ", depth + 1)
+                    else:
+                        size_str = format_size(item)
+                        output.append(f"{prefix}📄 {item.name} ({size_str})")
             except: pass
+            
         _scan(root)
         return "\n".join(output) if output else "(Empty)"
 
     async def chat(self, user_message: str, 
                   content_callback: Optional[Callable[[str], Any]] = None,
-                  status_callback: Optional[Callable[[str], Any]] = None):
+                  status_callback: Optional[Callable[[str], Any]] = None,
+                  interaction_callback: Optional[Callable[[str, Any], Any]] = None):
         if not self.session:
             await self.start()
         self.current_callback = content_callback
         CONTEXT.status_callback = status_callback
+        self.interaction_callback = interaction_callback
+        
+        start_t = time.time()
+        
         try:
             await self.session.send_and_wait({"prompt": user_message})
         finally:
+            duration = time.time() - start_t
+            self.stats["api_time"] += duration
+            self.stats["requests"] += 1
+            model = self.current_model
+            self.stats["models"][model] = self.stats["models"].get(model, 0) + 1
+            
             self.current_callback = None
             CONTEXT.status_callback = None
+            self.interaction_callback = None
 
     def _handle_event(self, event):
         if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
@@ -277,6 +449,18 @@ class CopilotService:
                 content = event.data.delta_content
                 if content:
                     self._dispatch_async(self.current_callback, content)
+        elif event.type == SessionEventType.TOOL_EXECUTION_START:
+            try:
+                tool_name = event.data.tool_name
+                args = event.data.arguments
+                logger.info(f"TOOL START: {tool_name} args={args}")
+            except: pass
+        elif event.type == SessionEventType.SESSION_USAGE_INFO:
+            self.last_usage_info = event.data
+            logger.info(f"Usage Info Received: {event.data}")
+        elif event.type == SessionEventType.ASSISTANT_USAGE:
+            self.last_usage_info = event.data
+            logger.info(f"Assistant Usage Received: {event.data}")
 
     def _dispatch_async(self, callback, *args):
         try:
