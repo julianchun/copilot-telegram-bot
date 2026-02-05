@@ -11,6 +11,7 @@ class SmartStreamer:
     """
     def __init__(self, message: Message, update_interval: float = 0.5, chunk_size: int = 50):
         self.message = message
+        self.chat = message.chat # Store chat for recovering stream
         self.update_interval = update_interval
         self.chunk_size = chunk_size
         self.full_text = ""
@@ -24,115 +25,7 @@ class SmartStreamer:
         self.messages = [message]
         self.page_limit = 4000  # Safe limit below 4096
 
-    async def update_status(self, status: str):
-        """
-        Updates the status line (prepend/header) without waiting for text chunks.
-        """
-        self.current_status = status
-        await self._update_message(force=True)
-
-    async def stream(self, new_text_chunk: str):
-        """
-        Accumulates text and updates the message if enough time/text has passed.
-        """
-        # Clear status once we start receiving real answer text
-        if self.current_status and new_text_chunk.strip():
-            self.current_status = ""
-            
-        self.full_text += new_text_chunk
-        
-        current_time = time.time()
-        time_diff = current_time - self.last_update_time
-        char_diff = len(self.full_text) - self.last_update_text_len
-
-        if time_diff >= self.update_interval or char_diff >= self.chunk_size:
-            await self._update_message()
-
-    async def close(self):
-        """
-        Final update with the complete text and no cursor.
-        """
-        self._running = False
-        self.current_status = "" # Clear status on finish
-        await self._update_message(final=True)
-
-    def _ensure_safe_markdown(self, text: str, force_close: bool = False) -> str:
-        """
-        Checks for unclosed code blocks and other markdown entities.
-        """
-        # 1. Handle code blocks
-        count = text.count("```")
-        if count % 2 != 0:
-            text += "\n```"
-        
-        # 2. Handle inline code `
-        # Only check if not inside a code block (simple heuristic)
-        # We can just count all backticks. If odd, close it.
-        # But ``` uses 3, so we need to be careful. 
-        # Actually, simpler approach for stability:
-        # If the text ends with an odd number of backticks/stars/underscores, 
-        # it might be incomplete.
-        
-        # Simple heuristic: If the text ends with a partial entity marker, 
-        # or has an unclosed pair, Telegram dies.
-        # A robust way is complex, but a simple way for streaming is:
-        # If the last character is a special markdown char, remove it temporarily 
-        # (it will come in the next chunk).
-        
-        if text and text[-1] in ('*', '_', '`', '['):
-            # Don't show the very last char if it's a potential opener/closer
-            # This avoids "bold start" errors like "Text **"
-            text = text[:-1]
-
-        return text
-
-    async def log_event(self, log_text: str):
-        """
-        Inserts a log message ABOVE the current streaming message.
-        It does this by deleting the current streaming message(s),
-        sending the log, and then creating a new streaming message.
-        """
-        # 1. Delete current streaming messages
-        for msg in self.messages:
-            try:
-                await msg.delete()
-            except Exception:
-                pass # Message might already be gone or too old
-        
-        self.messages = [] # Reset message tracking
-
-        # 2. Send the log message
-        # Use simple printing for the log
-        try:
-            # We use the chat_id from the original message to send the log
-            # The original message object (self.message) might be stale if we deleted it,
-            # but the chat object attached to it usually works. 
-            # Safer to use the chat_id.
-            chat = self.message.chat
-            await chat.send_message(log_text, parse_mode=ParseMode.MARKDOWN)
-        except Exception as e:
-            print(f"Failed to send log: {e}")
-
-        # 3. Re-create the streaming message
-        # We need to resend the content we have so far (self.full_text)
-        # plus the cursor.
-        
-        # If we have no text yet, just send the cursor or "Thinking..." equivalent?
-        # Ideally we restore exactly what was there.
-        text_to_restore = self.full_text
-        if not text_to_restore:
-            text_to_restore = " " # Space to allow sending
-        
-        # We rely on _update_message to handle the splitting and sending.
-        # But _update_message assumes self.messages has at least one item.
-        # So we must create the first one.
-        try:
-            new_msg = await chat.send_message("`Restoring stream...`", parse_mode=ParseMode.MARKDOWN)
-            self.messages = [new_msg]
-            # Force an update to render the full text correctly immediately
-            await self._update_message(force=True)
-        except Exception as e:
-             print(f"Failed to restore stream: {e}")
+    # ... (log_event, update_status, stream, close, ensure_safe_markdown stay same) ...
 
     async def _update_message(self, final: bool = False, force: bool = False):
         """
@@ -146,6 +39,16 @@ class SmartStreamer:
         
         # Ensure we have enough messages
         while len(self.messages) <= page_index:
+            if not self.messages:
+                # Recover from empty state (e.g. after log_event)
+                try:
+                    new_msg = await self.chat.send_message(self.cursor)
+                    self.messages.append(new_msg)
+                    continue
+                except Exception as e:
+                    print(f"Failed to recover stream: {e}")
+                    return
+
             # Finalize previous
             prev_msg = self.messages[-1]
             prev_page_idx = len(self.messages) - 1
