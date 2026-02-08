@@ -43,6 +43,12 @@ Interact with your development environment, navigate your codebase, and architec
     ```bash
     uv sync
     ```
+    
+    > **⚠️ Important:** There's a permission issue with the copilot SDK binary on v0.1.23. After running `uv sync`, fix the file permissions:
+    > ```bash
+    > chmod +x ./.venv/lib/python3.*/site-packages/copilot/bin/copilot
+    > ```
+    > Adjust the Python version (3.*) to match your environment.
 
 3.  **Configuration**
     Create a `.env` file in the root directory:
@@ -79,22 +85,41 @@ The bot launches into a dashboard showing:
 | `/start` | Open the main dashboard and project selector. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
-| `/model` | Hot-swap the underlying LLM (e.g., `o1-preview`). |
-| `/context` | Show files currently loaded in the agent's memory. |
+| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4o`). **Note:** Changes reset the session (history cleared). |
+| `/context` | Display model context and token usage info. |
 | `/tools` | List enabled MCP tools (`list_files`, `read_file`). |
 | `/info` | Display debug session information. |
+| `/usage` | Display session usage metrics. |
+| `/share` | Export session to Markdown file. |
+| `/clear` | Reset conversation memory. |
+| `/ls` | List files in current directory. |
+| `/cwd` | Show current working directory. |
 
 ## 🏗️ Architecture
 
-- **`main.py`**: Telegram bot entry point. Handles UI, menus, and message routing.
-- **`copilot_service.py`**: The "Backend". Manages the `CopilotClient` lifecycle.
-  - *Crucial:* When switching projects, this service **restarts** the SDK process with the new `cwd` to ensure true context isolation.
-- **`ux_utils.py`**: `SmartStreamer` class. Handles markdown parsing, cursor animation (` ▋`), and message pagination.
+The project follows a modular, event-driven architecture under the `bot/` directory:
+
+- **`bot/main.py`**: Application entry point. Bootstraps the Telegram app and registers handlers.
+- **`bot/core/`**:
+  - **`service.py`**: Manages the `CopilotClient` lifecycle and session state. Handles the critical process restart when switching project contexts.
+  - **`tools.py`**: Pure definitions of MCP tools (`list_files`, `read_file`) injected into the SDK.
+- **`bot/handlers/`**: Separated logic for Commands (`/start`, `/plan`), Chat Messages, and Callback Queries (Menu clicks).
+- **`bot/ui/`**: 
+  - **`streamer.py`**: `SmartStreamer` class. Handles markdown parsing, cursor animation (` ▋`), and debounced message pagination.
+  - **`menus.py`**: Centralized logic for keyboards and menu text.
 
 ## 🔒 Security Model
 
 - **Authorization**: The bot ignores all messages unless the sender's ID matches `ALLOWED_USER_ID`.
 - **Filesystem Access**: The bot uses custom MCP tools (`list_files`, `read_file`) which are strictly scoped to the `WORKSPACE_ROOT`. It cannot access files outside this directory.
+
+## ⚠️ Known Issues
+
+### Model Change Resets Session
+
+Changing models via `/model` will reset the session and clear conversation history. This is due to a bug in the Copilot SDK v0.1.23 where using `resume_session()` to change models causes duplicate events. See [issue details](.github/issues/duplicate-events-on-resume-session.md).
+
+**Workaround**: Use `/share` to export your session before changing models if you need to preserve the conversation history.
 
 ## 🤝 Contributing
 
