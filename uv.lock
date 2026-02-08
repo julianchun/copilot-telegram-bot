@@ -51,7 +51,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "github-copilot-sdk", specifier = ">=0.1.0" },
+    { name = "github-copilot-sdk", specifier = ">=0.1.23" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-telegram-bot", specifier = ">=20.0" },
@@ -71,16 +71,20 @@ wheels = [
 
 [[package]]
 name = "github-copilot-sdk"
-version = "0.1.20"
+version = "0.1.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/02/7d/afde0ec85815a558612130dc5ff79536299f411e672410c3edc0c1edeb2a/github_copilot_sdk-0.1.20.tar.gz", hash = "sha256:9e89cd46577fd18dd808d7113b7e20e021c4f944121a0a4891945460fb26c53c", size = 92207, upload-time = "2026-01-30T00:25:20.509Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/91/f8cfa809184988a273af58824b312d31a532ee3ee70875100b5061540178/github_copilot_sdk-0.1.20-py3-none-any.whl", hash = "sha256:e7fa1bb843e2494930126551b80f3a035f36c47a05f9173ad0cdfb4151ad9346", size = 40306, upload-time = "2026-01-30T00:25:19.184Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/69/08f478521739e3fbf6c7f7a24ba503c8f80f735be17ef0b08f42b12511c4/github_copilot_sdk-0.1.23-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:9b761445e47b757c63e3ad5596dbdc4fb84720612cad00a12425af056fbadb48", size = 57873198, upload-time = "2026-02-06T18:10:44.07Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/6a/c0262ea649a89518e3897d7c464e88aa623d7bb9a6861b7674fda5033c4c/github_copilot_sdk-0.1.23-py3-none-macosx_11_0_arm64.whl", hash = "sha256:27277aca84d767336590a426a48a00ded20533e6508be97c265eb3b64f6e921c", size = 54627888, upload-time = "2026-02-06T18:10:48.352Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/fb/63f147993c840c6b863250f10967dbc45095ab9d2a9ad1c86ca0588c65d5/github_copilot_sdk-0.1.23-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:b929027edeb147683c6625c8a6b90e7c6d64a72ea0567cc8e56c5c66bec7a37d", size = 60760946, upload-time = "2026-02-06T18:10:51.574Z" },
+    { url = "https://files.pythonhosted.org/packages/07/2f/0fdeb797e26da3f57c4a84bf3bdd6db9ba4e8974450c8ea0f32fd81c48ba/github_copilot_sdk-0.1.23-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:31d1adb09f342c8a466f64e8b81e6470fee6013d31e516cec7a33a44b6b0a4b4", size = 58941430, upload-time = "2026-02-06T18:10:55.502Z" },
+    { url = "https://files.pythonhosted.org/packages/45/9e/4e569de749066fb4c796954c5e01118d52e2cd05b42bf7a1451660851a8e/github_copilot_sdk-0.1.23-py3-none-win_amd64.whl", hash = "sha256:1e1c889aab857feadda546842c4c4730ddb0d63f04aa5ccaae2d83f4bc348eb7", size = 57636441, upload-time = "2026-02-06T18:10:59.359Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/65/15c94c7ea647b42123124e6f0daa7f93df630189188cf9e4ce36c5f799d9/github_copilot_sdk-0.1.23-py3-none-win_arm64.whl", hash = "sha256:d1ab5816b0ebd6507ddc6e11ccb5aac4eef2069f2b834b39fcceb909b0cf80bf", size = 55149715, upload-time = "2026-02-06T18:11:02.84Z" },
 ]
 
 [[package]]
