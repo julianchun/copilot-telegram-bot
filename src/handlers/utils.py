@@ -15,7 +15,9 @@ async def security_check(update: Update) -> bool:
         return False
         
     if not ALLOWED_USER_ID:
-        await update.message.reply_text(f"⚠️ Setup required. ID: `{user.id}`.")
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text(f"⚠️ Setup required. ID: `{user.id}`.")
         return False
         
     if user.id != ALLOWED_USER_ID:

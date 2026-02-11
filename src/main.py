@@ -15,8 +15,9 @@ from src.handlers.commands import (
     start_command, help_command, edit_command, clear_command, 
     usage_command, plan_command, cwd_command, ls_command, 
     context_command, tools_command,
-    info_command, model_command, share_command, cancel_command,
-    _build_main_menu
+    model_command, share_command, cancel_command,
+    session_command,
+    build_main_menu
 )
 from src.handlers.messages import chat_handler
 from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 async def post_init(application):
     if ALLOWED_USER_ID:
         try:
-            msg, keyboard = await _build_main_menu()
+            msg, keyboard = await build_main_menu()
             await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
             
             # Set up session end notification callback
@@ -47,10 +48,20 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN not found in env.")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).post_init(post_init).post_shutdown(post_shutdown).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     
     # Conversation Handler for Project Creation
-    fallback_handlers = [CommandHandler("cancel", lambda u, c: ConversationHandler.END), CommandHandler("start", start_command)]
+    fallback_handlers = [
+        CommandHandler("cancel", start_command),
+        CommandHandler("start", start_command),
+    ]
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^proj_new$")],
         states={WAITING_PROJECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_project_name)]},
@@ -69,10 +80,10 @@ def main():
     app.add_handler(CommandHandler("ls", ls_command))
     app.add_handler(CommandHandler("context", context_command))
     app.add_handler(CommandHandler("tools", tools_command))
-    app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("session", session_command))
     
     # Conversation & Callbacks
     app.add_handler(conv_handler)

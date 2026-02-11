@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Dict, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import WORKSPACE_PATH, GRANTED_PROJECT_PATHS
 
@@ -41,7 +41,7 @@ def get_project_keyboard(root_path: Path):
     buttons.append([InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")])
     return InlineKeyboardMarkup(buttons)
 
-def get_model_keyboard(models_data):
+def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     btns = []
     for m in models_data:
         m_id = m.get("id", "unknown")
@@ -50,7 +50,7 @@ def get_model_keyboard(models_data):
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 
-def get_main_menu_content(auth_status, version, current_model, cwd, project_selected=False):
+def get_main_menu_content(auth_status: str, version: str, current_model: str, cwd: str, project_selected: bool = False) -> str:
     # Shorten CWD for display
     display_cwd = str(cwd)
     # Show fallback if model not yet determined
@@ -72,7 +72,7 @@ def get_main_menu_content(auth_status, version, current_model, cwd, project_sele
         "/share - Export session to Markdown\n"
         "/usage - Display session usage metrics\n"
         "/context - Display model context info\n"
-        "/info  - Display session debug info\n\n"
+        "/session - Show session info and workspace summary\n\n"
         "**Navigation Command**\n"
         "/ls    - List files in current directory\n"
         "/cwd   - Show current directory\n"
@@ -87,10 +87,10 @@ def get_main_menu_content(auth_status, version, current_model, cwd, project_sele
 def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effort: str = None):
     """Build inline keyboard for reasoning effort selection."""
     effort_labels = {
-        "low": "🐢 Low",
-        "medium": "⚡ Medium", 
-        "high": "🔥 High",
-        "xhigh": "💎 XHigh",
+        "low": "Low",
+        "medium": "Medium", 
+        "high": "High",
+        "xhigh": "XHigh",
     }
     btns = []
     for effort in supported_efforts:
@@ -100,5 +100,5 @@ def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effor
         btns.append(InlineKeyboardButton(label, callback_data=f"reasoning:{model_id}:{effort}"))
     buttons = _build_button_grid(btns)
     # Add skip button to use default
-    buttons.append([InlineKeyboardButton("⏭️ Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
+    buttons.append([InlineKeyboardButton("Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
     return InlineKeyboardMarkup(buttons)

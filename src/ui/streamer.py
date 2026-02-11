@@ -4,6 +4,8 @@ from telegram import Message, Chat
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, BadRequest
 
+from src.config import TELEGRAM_MSG_LIMIT
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,32 +14,45 @@ class MessageSender:
     Sends blocking (non-streaming) messages to Telegram.
 
     Design:
-    - The initial "Thinking..." placeholder is edited into the first real content
-      (tool event or final response), so there's no leftover placeholder.
-    - Each tool event is a separate, permanent message (never overwritten).
-    - The final model response is sent as one or more messages (auto-split at 4000 chars)
-      with a footer appended after a --- separator.
+    - Tool events create separate permanent messages
+    - "Working..." message shown at the top after user sends message
+    - "Working..." deleted when final response is ready
+    - Final response sent as new messages
+    - Messages auto-split at 4000 chars with footer appended
     """
 
-    PAGE_LIMIT = 4000  # Safe margin below Telegram's 4096
+    PAGE_LIMIT = TELEGRAM_MSG_LIMIT  # Telegram's actual limit is 4096
 
     def __init__(self, message: Message):
-        self.placeholder = message          # The "Thinking..." message
         self.chat: Chat = message.chat
-        self._placeholder_used = False      # Has placeholder been edited yet?
+        self._working_msg: Message | None = None  # The "Working..." message to delete before final response
 
     async def send_tool_event(self, detail: str):
-        """Send a permanent tool-use message. First call edits the placeholder."""
-        # Detail already contains emoji prefix from formatters
-        text = detail
-        if not self._placeholder_used:
-            self._placeholder_used = True
-            await self._edit_message(self.placeholder, text)
-        else:
-            await self._send_message(text)
+        """Send a separate permanent message for each tool event."""
+        await self._send_message(detail)
+    
+    async def create_working(self):
+        """Create 'Working...' message once at the start."""
+        if not self._working_msg:
+            try:
+                self._working_msg = await self._send_message_return("⏳ Working...")
+            except Exception as e:
+                logger.warning(f"Failed to create working message: {e}")
 
     async def send_response(self, text: str, footer: str = ""):
-        """Send the final model response (with footer). Auto-splits long messages."""
+        """Send the final model response (with footer). Auto-splits long messages.
+        
+        Deletes "Working..." message first, then sends all response chunks as new messages.
+        """
+        # Delete working message if it exists
+        if self._working_msg:
+            try:
+                await asyncio.wait_for(self._working_msg.delete(), timeout=2.0)
+                self._working_msg = None
+            except Exception as e:
+                logger.debug(f"Could not delete working message: {e}")
+        
+        # Build full response with footer
         full = text
         if footer:
             full = text + "\n\n---\n" + footer
@@ -46,14 +61,10 @@ class MessageSender:
         if not chunks:
             chunks = ["_(empty response)_"]
 
-        for i, chunk in enumerate(chunks):
+        # Send all chunks as new messages
+        for chunk in chunks:
             safe = self._ensure_safe_markdown(chunk)
-            if i == 0 and not self._placeholder_used:
-                # Edit the "Thinking..." placeholder into the first chunk
-                self._placeholder_used = True
-                await self._edit_message(self.placeholder, safe)
-            else:
-                await self._send_message(safe)
+            await self._send_message(safe)
 
     # ------------------------------------------------------------------
     # Internals
@@ -156,23 +167,26 @@ class MessageSender:
         except Exception as e:
             logger.error(f"❌ edit_message error: {e}")
 
-    async def _send_message(self, text: str, _retry_count: int = 0):
-        """Send a new message to the chat with markdown fallback."""
+    async def _safe_send(self, text: str, _retry_count: int = 0) -> Message | None:
+        """Core send logic with retry, markdown fallback, and error handling.
+
+        Returns the sent Message (or None on failure / fire-and-forget).
+        """
         try:
-            await asyncio.wait_for(
+            return await asyncio.wait_for(
                 self.chat.send_message(text, parse_mode=ParseMode.MARKDOWN),
                 timeout=10.0,
             )
         except RetryAfter as e:
             if _retry_count >= 3:
-                logger.warning("⏱️ send_message max retries reached — skipping")
-                return
+                logger.warning("⏱️ send max retries reached — skipping")
+                return None
             await asyncio.sleep(e.retry_after)
-            await self._send_message(text, _retry_count + 1)
+            return await self._safe_send(text, _retry_count + 1)
         except BadRequest as e:
             if "Can't parse entities" in str(e):
                 try:
-                    await asyncio.wait_for(self.chat.send_message(text), timeout=10.0)
+                    return await asyncio.wait_for(self.chat.send_message(text), timeout=10.0)
                 except Exception:
                     logger.warning("Failed to send message even as plain text")
             else:
@@ -181,3 +195,12 @@ class MessageSender:
             logger.warning("⏱️ send_message timeout — skipping")
         except Exception as e:
             logger.error(f"❌ send_message error: {e}")
+        return None
+
+    async def _send_message(self, text: str, _retry_count: int = 0):
+        """Send a new message to the chat (fire-and-forget)."""
+        await self._safe_send(text, _retry_count)
+
+    async def _send_message_return(self, text: str, _retry_count: int = 0) -> Message | None:
+        """Send a new message and return the Message object."""
+        return await self._safe_send(text, _retry_count)

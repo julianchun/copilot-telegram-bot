@@ -7,7 +7,7 @@ Formats SDK session events into copilot-cli compatible markdown format.
 import json
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from copilot.generated.session_events import SessionEvent, SessionEventType
 
 logger = logging.getLogger(__name__)

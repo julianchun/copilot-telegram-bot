@@ -1,5 +1,4 @@
 import logging
-import asyncio
 import re
 from pathlib import Path
 from telegram import Update
@@ -21,7 +20,7 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     context.user_data['plan_mode'] = False
     await service.set_working_directory(str(path))
     header = await service.get_project_info_header(context.user_data)
-    await message.reply_text(f"✅ **Switched to Project:** `{path.name}`\n\n{header}", parse_mode=ParseMode.MARKDOWN)
+    await message.reply_text(f"✅ Switched to Project: {path.name}\n\n{header}")
 
 
 async def _handle_interaction_callback(query, update, context):
@@ -179,6 +178,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await security_check(update): return
     name = re.sub(r"\W+", "_", update.message.text).strip("_")
     if not name:
         await update.message.reply_text("⚠️ Invalid name. Try again or /cancel.")
