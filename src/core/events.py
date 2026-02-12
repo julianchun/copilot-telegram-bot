@@ -15,7 +15,7 @@ class EventHandlerMixin:
     """Mixin providing SDK event routing and per-type handler methods.
 
     Expects the host class to have:
-      current_callback, chunk_queue, _tool_call_names, completion_callback,
+      current_callback, _tool_call_names, completion_callback,
       current_model, last_assistant_usage, last_session_usage
     """
 
@@ -24,7 +24,6 @@ class EventHandlerMixin:
     def _build_handler_map(self) -> dict:
         """Build the event-type → handler lookup once per instance."""
         return {
-            SessionEventType.ASSISTANT_MESSAGE_DELTA: self._on_assistant_delta,
             SessionEventType.ASSISTANT_MESSAGE: self._on_assistant_message,
             SessionEventType.TOOL_EXECUTION_START: self._on_tool_start,
             SessionEventType.TOOL_EXECUTION_COMPLETE: self._on_tool_complete,
@@ -49,19 +48,14 @@ class EventHandlerMixin:
 
     # ── Per-type handlers ─────────────────────────────────────────────
 
-    def _on_assistant_delta(self, event):
-        if self.current_callback:
-            content = event.data.delta_content
-            if content:
-                try:
-                    self.chunk_queue.put_nowait(content)
-                except asyncio.QueueFull:
-                    logger.warning("Chunk queue full, dropping chunk")
-                except Exception as e:
-                    logger.error(f"Failed to queue chunk: {e}")
-
     def _on_assistant_message(self, event):
-        logger.debug("Skipping ASSISTANT_MESSAGE event (using DELTA events instead)")
+        """Capture the complete assistant message (streaming is disabled)."""
+        content = getattr(event.data, 'content', None)
+        if content and self.current_callback:
+            try:
+                self._dispatch_async(self.current_callback, content)
+            except Exception as e:
+                logger.error(f"Failed to dispatch assistant message: {e}")
 
     def _on_tool_start(self, event):
         try:

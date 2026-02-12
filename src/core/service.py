@@ -23,7 +23,7 @@ from src.config import (
 )
 from src.core.context import ctx
 from src.core.git import get_git_info as _get_git_info
-from src.core.filesystem import get_directory_listing, get_project_structure
+from src.core.filesystem import get_directory_listing, get_project_structure, get_project_stats
 from src.core.usage import SessionUsageTracker, SessionInfo
 from src.core.events import EventHandlerMixin
 from src.core.session import SessionMixin
@@ -81,22 +81,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
 
-        # Chunk queue for sequential processing (initialized lazily)
-        self._chunk_queue: Optional[asyncio.Queue] = None
-        self.chunk_processor_task: Optional[asyncio.Task] = None
         self._chat_lock = asyncio.Lock()
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
-
-    # ── Properties ────────────────────────────────────────────────────
-
-    @property
-    def chunk_queue(self) -> asyncio.Queue:
-        """Lazy initialization of chunk queue to ensure event loop is running."""
-        if self._chunk_queue is None:
-            self._chunk_queue = asyncio.Queue()
-        return self._chunk_queue
 
     # ── Working directory ─────────────────────────────────────────────
 
@@ -112,13 +100,22 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         current_root = ctx.root_path
         logger.info(f"📂 Requested CWD change: {current_root} -> {p}")
 
-        if str(p) != str(current_root):
+        if str(p) != str(current_root) or self.session_expired or not self.session:
+            # Full client restart: CWD changed, session died, or session missing
+            if str(p) != str(current_root):
+                reason = "CWD change"
+            elif self.session_expired:
+                reason = "session recovery"
+            else:
+                reason = "missing session"
+            logger.info(f"🔄 Full client restart ({reason}): {current_root} -> {p}")
+
             # Wait for any active chat to finish
             async with self._chat_lock:
                 pass
 
             if self._is_running:
-                logger.info("Stopping old Copilot Client before CWD change...")
+                logger.info("Stopping old Copilot Client...")
                 await self.stop()
 
             ctx.set_root(p)
@@ -361,6 +358,25 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         )
         return header
 
+    async def get_cockpit_message(self, context_user_data: dict = None) -> str:
+        """Build the cockpit message shown after project selection."""
+        from src.ui.menus import get_cockpit_content
+        model = self.user_selected_model or self.current_model or "Auto"
+        mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
+        path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
+        git_info = await self.get_git_info()
+        branch = git_info[1:] if git_info else ""
+        file_count, folder_count = get_project_stats(self.session_info.cwd)
+        return get_cockpit_content(
+            project_name=self.project_name or Path(self.session_info.cwd).name,
+            model=model,
+            mode=mode,
+            path=path_str,
+            branch=branch,
+            file_count=file_count,
+            folder_count=folder_count,
+        )
+
     def get_directory_listing(self) -> str:
         """Returns flat list of current directory content."""
         return get_directory_listing(self.session_info.cwd)
@@ -399,53 +415,16 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.interaction_callback = interaction_callback
             self.completion_callback = completion_callback
 
-            # Start chunk processor if not running
-            if content_callback and (not self.chunk_processor_task or self.chunk_processor_task.done()):
-                self.chunk_processor_task = asyncio.create_task(self._process_chunks())
-
             try:
                 msg_options: dict = {"prompt": user_message}
                 if attachments:
                     msg_options["attachments"] = attachments
                 await self.session.send_and_wait(msg_options, timeout=INTERACTION_TIMEOUT)
             finally:
-                # Drain chunk processor before clearing callbacks
-                if self.chunk_processor_task and not self.chunk_processor_task.done():
-                    try:
-                        await self.chunk_queue.put(None)
-                        await asyncio.wait_for(self.chunk_processor_task, timeout=2.0)
-                    except asyncio.TimeoutError:
-                        self.chunk_processor_task.cancel()
-                    except Exception as e:
-                        logger.error(f"Error stopping chunk processor: {e}")
-
                 self.current_callback = None
                 ctx.status_callback = None
                 self.interaction_callback = None
                 self.completion_callback = None
-
-    async def _process_chunks(self):
-        """Process streaming chunks sequentially from queue to ensure correct order."""
-        try:
-            while True:
-                chunk = await self.chunk_queue.get()
-                if chunk is None:
-                    break
-
-                if self.current_callback:
-                    try:
-                        if asyncio.iscoroutinefunction(self.current_callback):
-                            await self.current_callback(chunk)
-                        else:
-                            self.current_callback(chunk)
-                    except Exception as e:
-                        logger.error(f"Chunk processing error: {e}", exc_info=True)
-
-                self.chunk_queue.task_done()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Chunk processor error: {e}", exc_info=True)
 
 
 # Global Singleton

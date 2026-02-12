@@ -1,6 +1,5 @@
 import logging
 from telegram import Update
-from telegram.constants import ParseMode
 from src.config import ALLOWED_USER_ID
 from src.core.service import service
 
@@ -33,8 +32,7 @@ async def check_project_selected(update: Update) -> bool:
     if not service.project_selected:
         if update.message:
             await update.message.reply_text(
-                "⚠️ **No Project Selected**\nPlease select or create a project from the /start menu first.", 
-                parse_mode=ParseMode.MARKDOWN
+                "⚠️ No Project Selected\nPlease select or create a project from the /start menu first."
             )
         elif update.callback_query:
             await update.callback_query.answer("⚠️ No Project Selected", show_alert=True)

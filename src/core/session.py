@@ -100,6 +100,9 @@ class SessionMixin:
         self.last_session_usage = None
         self.last_assistant_usage = None
 
+        # Reset session info so /session shows fresh data
+        self.session_info = SessionInfo()
+
         self._unsubscribe_handlers()
 
         if self.session:
@@ -117,8 +120,7 @@ class SessionMixin:
         Note: Session resume with model change causes duplicate events in SDK v0.1.23.
         See: https://github.com/julianchun/copilot-cli-telegram-bot/issues/2
         """
-        if reasoning_effort is not None:
-            self.current_reasoning_effort = reasoning_effort
+        self.current_reasoning_effort = reasoning_effort
 
         self.current_model = model
         self.user_selected_model = model
@@ -194,7 +196,7 @@ class SessionMixin:
 
         session_config = {
             "model": model,
-            "streaming": True,
+            "streaming": False,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
@@ -204,8 +206,7 @@ class SessionMixin:
                 "mode": "append",
                 "content": (
                     "You are assisting via a Telegram bot. "
-                    "Respond concisely and use Telegram-compatible Markdown. "
-                    "Use single backticks for inline code, triple backticks for code blocks. "
+                    "Respond concisely and use Plain text. "
                     "Avoid HTML tags. Keep responses focused and actionable."
                 ),
             },

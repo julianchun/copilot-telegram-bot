@@ -2,18 +2,30 @@ import uuid
 import asyncio
 import time
 import logging
+from pathlib import Path
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
 from src.ui.streamer import MessageSender
-from src.ui.formatters import escape_md_v1
+
 from src.handlers.utils import security_check, check_project_selected
 
 logger = logging.getLogger(__name__)
+
+# Load planning prompt for plan mode
+_PLAN_PROMPT_FILE = Path(__file__).parent / "plan.prompt.md"
+_PLAN_PROMPT = ""
+try:
+    if _PLAN_PROMPT_FILE.exists():
+        _PLAN_PROMPT = _PLAN_PROMPT_FILE.read_text(encoding="utf-8")
+        logger.info(f"Loaded planning prompt from {_PLAN_PROMPT_FILE}")
+    else:
+        logger.warning(f"Plan prompt file not found: {_PLAN_PROMPT_FILE}")
+except Exception as e:
+    logger.warning(f"Failed to load plan prompt: {e}")
 
 # Pending Interactions (Future map) - Shared with callbacks
 # Structure: {interaction_id: {"future": Future, "timestamp": float, "chat_id": int, "context": ContextTypes.DEFAULT_TYPE}}
@@ -77,7 +89,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             # Use SDK-native attachments (feature #7)
             attachments = [{"type": "file", "path": str(download_path)}]
             user_text = (update.message.caption or "Describe this file").strip()
-            await update.message.reply_text(f"📎 Uploaded: `{original_name}`", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(f"📎 Uploaded: {original_name}")
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             await update.message.reply_text(f"⚠️ Upload failed: {e}")
@@ -86,7 +98,10 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     if not user_text: return
 
     if context.user_data.get('plan_mode'):
-        user_text = "PLAN MODE: Focus on high-level architecture. " + user_text
+        if _PLAN_PROMPT:
+            user_text = _PLAN_PROMPT + "\n\n---\n\n" + user_text
+        else:
+            user_text = "PLAN MODE: Focus on high-level architecture and planning. " + user_text
 
     # Initialize message sender with the user's message chat
     sender = MessageSender(update.message)
@@ -137,16 +152,14 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                 tool_name = getattr(payload, 'tool_name', 'unknown')
                 args = getattr(payload, 'arguments', {})
                 
-                # Compact permission request format with escaped tool name
-                tool_name_safe = escape_md_v1(tool_name)
-                msg_text = f"🛡️ Permission request: **{tool_name_safe}**"
+                # Plain text permission request (no markdown)
+                msg_text = f"🛡️ Permission: {tool_name}"
                 
-                # Add args preview if present (without backticks to avoid parse issues)
+                # Add args preview if present
                 if args and len(str(args)) > 0:
                     args_preview = str(args)[:80]
                     suffix = '...' if len(str(args)) > 80 else ''
-                    args_safe = escape_md_v1(args_preview)
-                    msg_text += f"\nArguments: {args_safe}{suffix}"
+                    msg_text += f"\nArguments: {args_preview}{suffix}"
                 
                 msg_text += "\n\nAllow?"
                 # Store tool_name in interaction_data for later reference
@@ -161,9 +174,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                 prompt = getattr(payload, 'message', str(payload))
                 options = getattr(payload, 'options', [])
                 
-                # Escape prompt for safe Markdown rendering
-                prompt_safe = escape_md_v1(prompt)
-                msg_text = f"❓ **Copilot Asks:**\n{prompt_safe}\n\nSelect an option:"
+                # Plain text prompt (no markdown)
+                msg_text = f"❓ Copilot Asks:\n{prompt}\n\nSelect an option:"
                 buttons = []
                 for i, opt in enumerate(options):
                     label = str(opt)
@@ -243,12 +255,12 @@ async def _send_interaction_msg(update, context, chat_id, text, buttons):
     """Send an inline-keyboard message, with fallback to context.bot.send_message."""
     markup = InlineKeyboardMarkup(buttons)
     try:
-        await update.message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(text, reply_markup=markup)
     except Exception as send_err:
         logger.error(f"❌ Failed to send interaction message: {send_err}", exc_info=True)
         if chat_id and context:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
             except Exception as fallback_err:
                 logger.error(f"❌ Fallback send also failed: {fallback_err}", exc_info=True)
                 raise

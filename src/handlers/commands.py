@@ -2,7 +2,6 @@ import logging
 import os
 from pathlib import Path
 from telegram import Update
-from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from src.config import WORKSPACE_PATH
@@ -15,23 +14,33 @@ from src.ui.formatters import format_tokens, format_percentage, get_model_contex
 logger = logging.getLogger(__name__)
 
 
-async def _get_system_info() -> tuple[str, str]:
-    """Get version and auth status with error handling."""
+def _get_sdk_version() -> str:
+    """Get copilot SDK package version."""
     try:
-        version = await service.get_cli_version()
-        auth = await service.get_auth_status()
-        return version, auth
+        from importlib.metadata import version
+        return version("github-copilot-sdk")
     except Exception:
-        return "Unknown", "Error"
+        return "unknown"
+
+
+async def _get_system_info() -> tuple[str, str, str]:
+    """Get CLI version, auth status, and SDK version with error handling."""
+    sdk_version = _get_sdk_version()
+    try:
+        cli_version = await service.get_cli_version()
+        auth = await service.get_auth_status()
+        return cli_version, auth, sdk_version
+    except Exception:
+        return "Unknown", "Error", sdk_version
 
 
 # --- Handlers ---
 
 async def build_main_menu() -> tuple:
     """Build main menu message and keyboard. Shared by start_command and post_init."""
-    from src.ui.menus import get_main_menu_content, get_project_keyboard
-    version, auth = await _get_system_info()
-    msg = get_main_menu_content(auth, version, service.current_model, service.get_working_directory(), service.project_selected)
+    from src.ui.menus import get_start_splash_content, get_project_keyboard
+    cli_version, auth, sdk_version = await _get_system_info()
+    msg = get_start_splash_content(auth, cli_version, sdk_version)
     keyboard = get_project_keyboard(WORKSPACE_PATH)
     return msg, keyboard
 
@@ -40,17 +49,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start command received")
     if not await security_check(update): return
     msg, keyboard = await build_main_menu()
-    await update.message.reply_text(msg, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(msg, reply_markup=keyboard)
     return ConversationHandler.END
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
-    from src.ui.menus import get_main_menu_content
+    from src.ui.menus import get_help_content
     
-    version, auth = await _get_system_info()
+    cli_version, auth, _ = await _get_system_info()
     
-    msg = get_main_menu_content(auth, version, service.current_model, service.get_working_directory(), service.project_selected)
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    msg = get_help_content(auth, cli_version, service.current_model, service.get_working_directory(), service.project_selected)
+    await update.message.reply_text(msg)
 
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -62,7 +71,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     await service.reset_session()
-    await update.message.reply_text("🧹 **Session Cleared**\nMemory reset.", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the currently processing request using SDK session.abort()."""
@@ -73,7 +82,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         await service.session.abort()
-        await update.message.reply_text("🛑 **Request cancelled.**", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("🛑 Request cancelled.")
     except Exception as e:
         logger.error(f"Cancel failed: {e}")
         await update.message.reply_text(f"⚠️ Cancel failed: {e}")
@@ -83,7 +92,7 @@ async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_project_selected(update): return
     context.user_data['plan_mode'] = False
     logger.info("Switched to Edit Mode")
-    await update.message.reply_text("💬 **Switched to Edit (Chat) Mode**", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("💬 Switched to Edit (Chat) Mode")
 
 async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -94,16 +103,16 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # /plan <prompt> — force plan mode and send prompt
         context.user_data['plan_mode'] = True
         prompt = " ".join(args)
-        await update.message.reply_text("📝 **Plan Mode ON**", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text("📝 Plan Mode ON")
         await chat_handler(update, context, override_text=prompt)
     else:
         # /plan — toggle plan mode
         mode = not context.user_data.get('plan_mode', False)
         context.user_data['plan_mode'] = mode
         if mode:
-            await update.message.reply_text("📝 **Switch to Plan Mode**", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text("📝 Switch to Plan Mode")
         else:
-            await update.message.reply_text("💬 **Switch to Edit (Chat) Mode**", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
 
 async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -114,8 +123,14 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    ls_text = service.get_directory_listing()
-    await update.message.reply_text(ls_text)
+    from src.config import TELEGRAM_MSG_LIMIT
+    tree = service.get_project_structure()
+    header = f"📂 {service.project_name or 'Project'} Structure\n\n"
+    text = header + tree
+    if len(text) > TELEGRAM_MSG_LIMIT:
+        avail = TELEGRAM_MSG_LIMIT - len(header) - len("\n... truncated")
+        text = header + tree[:avail] + "\n... truncated"
+    await update.message.reply_text(text)
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -151,7 +166,7 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         free_pct = format_percentage(free_space, context_limit)
         
         msg = (
-            f"**{model_name}** · {format_tokens(total_used)}/{format_tokens(context_limit)} tokens ({total_pct})\n"
+            f"{model_name} · {format_tokens(total_used)}/{format_tokens(context_limit)} tokens ({total_pct})\n"
             f"System/Tools:  {format_tokens(input_tokens)} ({system_pct})\n"
             f"Messages:      {format_tokens(output_tokens)} ({messages_pct})\n"
             f"Free Space:    {format_tokens(free_space)} ({free_pct})\n"
@@ -161,17 +176,16 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cache_pct = format_percentage(cache_tokens, context_limit)
             msg += f"Cached:        {format_tokens(cache_tokens)} ({cache_pct})\n"
         
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(msg)
     else:
         await update.message.reply_text(
-            "📊 No usage data available yet. Send a message first.",
-            parse_mode=ParseMode.MARKDOWN
+            "📊 No usage data available yet. Send a message first."
         )
 
 async def tools_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    await update.message.reply_text("🛠 **Enabled Tools**\n✅ `list_files`\n✅ `read_file`\n❌ `run_shell`", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text("🛠 Enabled Tools\n✅ list_files\n✅ read_file\n❌ run_shell")
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -230,38 +244,38 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_cost = sum(u.cost for u in tracker.model_usage.values())
 
     msg = (
-        f"📋 **Session Info**\n"
-        f"• Session ID: `{session_id_full}`\n"
-        f"• Status: `{status}`\n"
-        f"• Duration: `{uptime_str}`\n"
-        f"• Created: `{created_str}`\n"
-        f"• Model: `{model}`\n"
-        f"• Mode: `{mode}`\n"
-        f"• Total Request cost: `{total_cost}`\n\n"
-        f"📂 **Workspace**\n"
-        f"• Project: `{service.project_name or Path(cwd).name}`\n"
-        f"• Path: `{cwd}`\n"
-        f"• Branch: `{branch}`\n"
+        f"📋 Session Info\n"
+        f"• Session ID: {session_id_full}\n"
+        f"• Status: {status}\n"
+        f"• Duration: {uptime_str}\n"
+        f"• Created: {created_str}\n"
+        f"• Model: {model}\n"
+        f"• Mode: {mode}\n"
+        f"• Total Request cost: {total_cost}\n\n"
+        f"📂 Workspace\n"
+        f"• Project: {service.project_name or Path(cwd).name}\n"
+        f"• Path: {cwd}\n"
+        f"• Branch: {branch}\n"
     )
     
     # Git root and repository if available
     if session_info.git_root:
-        msg += f"• Git Root: `{session_info.git_root}`\n"
+        msg += f"• Git Root: {session_info.git_root}\n"
     if session_info.repository:
-        msg += f"• Repository: `{session_info.repository}`\n"
+        msg += f"• Repository: {session_info.repository}\n"
 
     # Token context
     if tracker.current_tokens or tracker.token_limit:
         pct = (tracker.current_tokens / tracker.token_limit * 100) if tracker.token_limit else 0
-        msg += f"• Context: `{tracker.current_tokens}/{tracker.token_limit}` ({pct:.0f}%)\n"
+        msg += f"• Context: {tracker.current_tokens}/{tracker.token_limit} ({pct:.0f}%)\n"
 
     # Quota status
     quota_summary = tracker.get_quota_summary()
     if quota_summary:
-        msg += f"\n💳 **Quota Status:**\n{quota_summary}\n\n"
+        msg += f"\n💳 Quota Status:\n{quota_summary}\n\n"
 
     # Usage summary
     usage_summary = tracker.get_usage_summary()
-    msg += f"\n📊 **Usage Summary:**\n{usage_summary}\n"
+    msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(msg)

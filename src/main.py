@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -7,7 +8,6 @@ from telegram.ext import (
     ConversationHandler,
     filters
 )
-from telegram.constants import ParseMode
 
 from src.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from src.core.service import service
@@ -24,11 +24,57 @@ from src.handlers.callbacks import button_handler, create_project_name, WAITING_
 
 logger = logging.getLogger(__name__)
 
+BOT_DESCRIPTION = (
+    "The Telegram AI assistant Bot built for developers. "
+    "Bring the power of GitHub Copilot directly into your chats."
+)
+BOT_SHORT_DESCRIPTION = "GitHub Copilot AI assistant for Telegram"
+ICON_PATH = Path(__file__).parent / "assets" / "copilot-telegram-bot_icon.png"
+
+async def _setup_bot_profile(bot):
+    """Set bot profile photo, description, and short description."""
+    # Set description + short description
+    try:
+        await bot.set_my_description(description=BOT_DESCRIPTION)
+        await bot.set_my_short_description(short_description=BOT_SHORT_DESCRIPTION)
+        logger.info("✅ Bot description set")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to set bot description: {e}")
+
+    # Set profile photo (compress + upload)
+    if ICON_PATH.exists():
+        try:
+            from io import BytesIO
+            from PIL import Image
+            from telegram import InputProfilePhotoStatic
+
+            img = Image.open(ICON_PATH)
+            img = img.convert("RGBA")
+            img.thumbnail((512, 512), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="PNG", optimize=True)
+            buf.seek(0)
+            buf.name = "photo.png"
+
+            photo = InputProfilePhotoStatic(photo=buf)
+            await bot.do_api_request(
+                "setMyProfilePhoto",
+                api_kwargs={"photo": photo},
+            )
+            logger.info("✅ Bot profile photo set")
+        except ImportError as e:
+            logger.warning(f"⚠️ Missing dependency for profile photo: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to set profile photo: {e}")
+    else:
+        logger.warning(f"⚠️ Icon not found: {ICON_PATH}")
+
 async def post_init(application):
+    await _setup_bot_profile(application.bot)
     if ALLOWED_USER_ID:
         try:
             msg, keyboard = await build_main_menu()
-            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard)
             
             # Set up session end notification callback
             async def notify_session_end(msg: str):

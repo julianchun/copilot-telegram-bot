@@ -81,3 +81,32 @@ def get_project_structure(session_cwd: Optional[str] = None, max_depth: int = 2,
 
     _scan(root)
     return "\n".join(output) if output else "(Empty)"
+
+
+def get_project_stats(session_cwd: Optional[str] = None) -> tuple[int, int]:
+    """Count total files and folders in the project, respecting IGNORED_DIRS.
+
+    Returns (file_count, folder_count).
+    """
+    root = Path(session_cwd) if session_cwd else ctx.root_path
+    file_count = 0
+    folder_count = 0
+
+    def _walk(path: Path):
+        nonlocal file_count, folder_count
+        try:
+            for item in path.iterdir():
+                if item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    if item.name in IGNORED_DIRS:
+                        continue
+                    folder_count += 1
+                    _walk(item)
+                else:
+                    file_count += 1
+        except Exception:
+            pass
+
+    _walk(root)
+    return file_count, folder_count
