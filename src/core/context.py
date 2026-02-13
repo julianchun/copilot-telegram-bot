@@ -12,7 +12,7 @@ class SessionContext:
     def __init__(self):
         self.root_path: Path = WORKSPACE_PATH
         self.status_callback: Optional[Callable[[str], Any]] = None
-        self.read_files: List[str] = []
+        self.read_files: list[str] = []
         self.session_start_time: Optional[datetime] = None
 
     def set_root(self, path: Path):

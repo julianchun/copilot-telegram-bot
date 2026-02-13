@@ -25,7 +25,7 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     # Edit the start message to remove inline keyboard
     if query:
         try:
-            await query.edit_message_text(f"✅ Project: {path.name}")
+            await query.edit_message_text(f"✅ Selected Project: {path.name}")
         except Exception as e:
             logger.warning(f"⚠️ Failed to edit start message: {e}")
 

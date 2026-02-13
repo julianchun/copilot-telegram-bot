@@ -74,11 +74,11 @@ def _command_reference() -> str:
 
 def get_start_splash_content(auth_status: str, cli_version: str, sdk_version: str = "") -> str:
     """Minimal start splash — bot identity + project picker prompt. No commands."""
-    sdk_line = f"SDK: {sdk_version}\n" if sdk_version else ""
+    sdk_line = f"SDK version: {sdk_version}\n" if sdk_version else ""
     return (
         f"🚀 Copilot CLI-Telegram\n"
         f"User: {auth_status}\n"
-        f"CLI: {cli_version}\n"
+        f"CLI version: {cli_version}\n"
         f"{sdk_line}\n"
         "⚠️ Select a project below to begin."
     )
@@ -117,19 +117,14 @@ def get_help_content(
     status_dot = "🟢" if project_selected else "🔴"
     model_display = current_model if current_model else "Auto"
     return (
-        f"🚀 Copilot CLI-Telegram {status_dot}\n"
+        f"{status_dot} Copilot CLI-Telegram\n"
         f"User: {auth_status}\n"
-        f"Version: {version}\n"
         f"Workspace: {cwd}\n"
         f"Model: {model_display}\n\n"
         f"{_command_reference()}"
         + ("" if project_selected else "\n⚠️ Action Required: Select or create a project to begin.")
     )
 
-
-def get_main_menu_content(auth_status: str, version: str, current_model: str, cwd: str, project_selected: bool = False) -> str:
-    """Backward-compatible wrapper — now delegates to start splash."""
-    return get_start_splash_content(auth_status, version, "")
 
 def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effort: str = None):
     """Build inline keyboard for reasoning effort selection."""

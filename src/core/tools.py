@@ -1,9 +1,12 @@
 import os
+import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 from copilot.tools import define_tool
 from src.core.context import ctx
 from src.config import FILE_CONTENT_LIMIT
+
+logger = logging.getLogger(__name__)
 
 # --- Tool Definitions ---
 

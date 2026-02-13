@@ -192,13 +192,6 @@ def truncate_text(text: str, max_length: int = 150) -> str:
 
 # ── Helpers relocated from handlers/commands.py ──────────────────────────────
 
-def escape_md_v1(text: str) -> str:
-    """Escape Markdown V1 special characters for Telegram."""
-    for char in ['_', '*', '[', ']', '(', ')', '~', '`']:
-        text = text.replace(char, '\\' + char)
-    return text
-
-
 def format_tokens(n: int) -> str:
     """Format token count for display (e.g., 12500 → '12.5k')."""
     if n >= 1000:

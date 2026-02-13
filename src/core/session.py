@@ -24,7 +24,17 @@ logger = logging.getLogger(__name__)
 _TOOL_ALLOWLIST = frozenset({
     "report_intent", "task", "list_files", "read_file",
     "view", "glob", "fetch_copilot_cli_documentation",
+    "ask_user", "update_todo"
 })
+
+
+class _PermissionRequest:
+    """Lightweight container for tool permission request data."""
+    __slots__ = ("tool_name", "arguments")
+
+    def __init__(self, name: str, args: dict):
+        self.tool_name = name
+        self.arguments = args
 
 
 class SessionMixin:
@@ -158,6 +168,8 @@ class SessionMixin:
         error = input_data.get("error")
         logger.info(f"📛 Session ended | reason={reason} error={error}")
 
+        self.cleanup_temp_dir()
+
         if reason in ("timeout", "error"):
             self.session_expired = True
             self.session_info.status = "Expired"
@@ -274,7 +286,7 @@ class SessionMixin:
             loop = asyncio.get_running_loop()
             loop.create_task(_extract())
         except RuntimeError:
-            pass  # No event loop — skip extraction
+            logger.debug("No running event loop — skipping session context extraction")
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
@@ -293,13 +305,7 @@ class SessionMixin:
 
         try:
             logger.info(f"🔔 Requesting user permission for tool: {tool_name}")
-
-            class PermissionRequest:
-                def __init__(self, name, args):
-                    self.tool_name = name
-                    self.arguments = args
-
-            request = PermissionRequest(tool_name, tool_args)
+            request = _PermissionRequest(tool_name, tool_args)
 
             result = await asyncio.wait_for(
                 self.interaction_callback("permission", request),

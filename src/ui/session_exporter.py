@@ -67,8 +67,10 @@ def format_session_markdown(events: List[SessionEvent], metadata: Dict[str, Any]
     
     # Calculate session duration from first to last event
     if filtered_events:
-        first_timestamp = filtered_events[0][1].timestamp
-        last_timestamp = filtered_events[-1][1].timestamp
+        first_event = filtered_events[0][1]
+        last_event = filtered_events[-1][1]
+        first_timestamp = getattr(first_event, 'timestamp', None) or datetime.now()
+        last_timestamp = getattr(last_event, 'timestamp', None) or first_timestamp
         duration_delta = last_timestamp - first_timestamp
         duration_minutes = int(duration_delta.total_seconds() / 60)
         duration_seconds = int(duration_delta.total_seconds() % 60)

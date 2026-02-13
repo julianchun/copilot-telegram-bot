@@ -2,7 +2,6 @@ import uuid
 import asyncio
 import time
 import logging
-from pathlib import Path
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -15,17 +14,14 @@ from src.handlers.utils import security_check, check_project_selected
 
 logger = logging.getLogger(__name__)
 
-# Load planning prompt for plan mode
-_PLAN_PROMPT_FILE = Path(__file__).parent / "plan.prompt.md"
-_PLAN_PROMPT = ""
-try:
-    if _PLAN_PROMPT_FILE.exists():
-        _PLAN_PROMPT = _PLAN_PROMPT_FILE.read_text(encoding="utf-8")
-        logger.info(f"Loaded planning prompt from {_PLAN_PROMPT_FILE}")
-    else:
-        logger.warning(f"Plan prompt file not found: {_PLAN_PROMPT_FILE}")
-except Exception as e:
-    logger.warning(f"Failed to load plan prompt: {e}")
+_PLAN_PROMPT = (
+    "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n\n"
+    "1. Research the codebase with read-only tools.\n"
+    "2. Ask clarifying questions if needed.\n"
+    "3. Deliver a structured, phased plan with short bullets, file references, and rationale.\n\n"
+    "Rules: No code blocks. Keep it scannable and mobile-friendly.\n\n"
+    "---\n\n"
+)
 
 # Pending Interactions (Future map) - Shared with callbacks
 # Structure: {interaction_id: {"future": Future, "timestamp": float, "chat_id": int, "context": ContextTypes.DEFAULT_TYPE}}
@@ -98,10 +94,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     if not user_text: return
 
     if context.user_data.get('plan_mode'):
-        if _PLAN_PROMPT:
-            user_text = _PLAN_PROMPT + "\n\n---\n\n" + user_text
-        else:
-            user_text = "PLAN MODE: Focus on high-level architecture and planning. " + user_text
+        user_text = _PLAN_PROMPT + user_text
 
     # Initialize message sender with the user's message chat
     sender = MessageSender(update.message)
@@ -234,7 +227,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         except Exception as e:
             logger.error(f"Footer generation failed: {e}")
         
-        # Send blockin response with footer
+        # Send blocking response with footer
         full_response = "".join(response_chunks)
         await sender.send_response(full_response, footer)
 

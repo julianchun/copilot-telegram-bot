@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from telegram import BotCommand
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -14,7 +15,7 @@ from src.core.service import service
 from src.handlers.commands import (
     start_command, help_command, edit_command, clear_command, 
     usage_command, plan_command, cwd_command, ls_command, 
-    context_command, tools_command,
+    context_command,
     model_command, share_command, cancel_command,
     session_command,
     build_main_menu
@@ -29,48 +30,40 @@ BOT_DESCRIPTION = (
     "Bring the power of GitHub Copilot directly into your chats."
 )
 BOT_SHORT_DESCRIPTION = "GitHub Copilot AI assistant for Telegram"
-ICON_PATH = Path(__file__).parent / "assets" / "copilot-telegram-bot_icon.png"
 
-async def _setup_bot_profile(bot):
-    """Set bot profile photo, description, and short description."""
-    # Set description + short description
+async def setup_bot_commands(application):
+    """Set bot commands visible in Telegram UI."""
+    commands = [
+        BotCommand("start", "Open project selection menu"),
+        BotCommand("help", "Show help manual"),
+        BotCommand("plan", "Architecture & Planning mode"),
+        BotCommand("edit", "Standard Chat/Coding mode"),
+        BotCommand("model", "Switch AI Model"),
+        BotCommand("clear", "Reset conversation memory"),
+        BotCommand("cancel", "Cancel in-progress request"),
+        BotCommand("share", "Export session to Markdown"),
+        BotCommand("usage", "Display session usage metrics"),
+        BotCommand("context", "Display model context info"),
+        BotCommand("session", "Show session info & workspace summary"),
+        BotCommand("ls", "Project file tree"),
+        BotCommand("cwd", "Show current directory"),
+    ]
     try:
-        await bot.set_my_description(description=BOT_DESCRIPTION)
-        await bot.set_my_short_description(short_description=BOT_SHORT_DESCRIPTION)
-        logger.info("✅ Bot description set")
+        # Set bot commands
+        await application.bot.set_my_commands(commands)
+        logger.info(f"✅ Bot commands set successfully ({len(commands)} commands)")
+        
+        # Set bot description
+        await application.bot.set_my_description(BOT_DESCRIPTION)
+        await application.bot.set_my_short_description(BOT_SHORT_DESCRIPTION)
+        logger.info("✅ Bot description set successfully")
     except Exception as e:
-        logger.warning(f"⚠️ Failed to set bot description: {e}")
-
-    # Set profile photo (compress + upload)
-    if ICON_PATH.exists():
-        try:
-            from io import BytesIO
-            from PIL import Image
-            from telegram import InputProfilePhotoStatic
-
-            img = Image.open(ICON_PATH)
-            img = img.convert("RGBA")
-            img.thumbnail((512, 512), Image.LANCZOS)
-            buf = BytesIO()
-            img.save(buf, format="PNG", optimize=True)
-            buf.seek(0)
-            buf.name = "photo.png"
-
-            photo = InputProfilePhotoStatic(photo=buf)
-            await bot.do_api_request(
-                "setMyProfilePhoto",
-                api_kwargs={"photo": photo},
-            )
-            logger.info("✅ Bot profile photo set")
-        except ImportError as e:
-            logger.warning(f"⚠️ Missing dependency for profile photo: {e}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to set profile photo: {e}")
-    else:
-        logger.warning(f"⚠️ Icon not found: {ICON_PATH}")
+        logger.error(f"❌ Failed to set bot commands/description: {e}", exc_info=True)
 
 async def post_init(application):
-    await _setup_bot_profile(application.bot)
+    # Set bot commands
+    await setup_bot_commands(application)
+    
     if ALLOWED_USER_ID:
         try:
             msg, keyboard = await build_main_menu()
@@ -105,7 +98,7 @@ def main():
     
     # Conversation Handler for Project Creation
     fallback_handlers = [
-        CommandHandler("cancel", start_command),
+        CommandHandler("cancel", start_command),  # Returns to main menu on cancel
         CommandHandler("start", start_command),
     ]
     conv_handler = ConversationHandler(
@@ -125,7 +118,6 @@ def main():
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("ls", ls_command))
     app.add_handler(CommandHandler("context", context_command))
-    app.add_handler(CommandHandler("tools", tools_command))
     app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))

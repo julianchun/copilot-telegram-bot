@@ -340,7 +340,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Project info ──────────────────────────────────────────────────
 
-    async def get_project_info_header(self, context_user_data: dict = None) -> str:
+    async def get_project_info_header(self, context_user_data: Optional[dict] = None) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
         model = self.user_selected_model or self.current_model or "Auto"
         mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
@@ -358,7 +358,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         )
         return header
 
-    async def get_cockpit_message(self, context_user_data: dict = None) -> str:
+    async def get_cockpit_message(self, context_user_data: Optional[dict] = None) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         model = self.user_selected_model or self.current_model or "Auto"
@@ -381,9 +381,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Returns flat list of current directory content."""
         return get_directory_listing(self.session_info.cwd)
 
-    def get_project_structure(self, max_depth: int = 2, limit: int = 999999) -> str:
+    def get_project_structure(self, max_depth: int = 2) -> str:
         """Returns nested project structure with file sizes."""
-        return get_project_structure(self.session_info.cwd, max_depth, limit)
+        return get_project_structure(self.session_info.cwd, max_depth)
 
     # ── Chat ──────────────────────────────────────────────────────────
 

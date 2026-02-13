@@ -53,7 +53,7 @@ def get_directory_listing(session_cwd: Optional[str] = None) -> str:
         return f"Error: {e}"
 
 
-def get_project_structure(session_cwd: Optional[str] = None, max_depth: int = 2, limit: int = 999999) -> str:
+def get_project_structure(session_cwd: Optional[str] = None, max_depth: int = 2) -> str:
     """Returns nested project structure with 2-space indentation and emoji icons."""
     root = Path(session_cwd) if session_cwd else ctx.root_path
     output: list[str] = []

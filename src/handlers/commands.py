@@ -125,11 +125,10 @@ async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_project_selected(update): return
     from src.config import TELEGRAM_MSG_LIMIT
     tree = service.get_project_structure()
-    header = f"📂 {service.project_name or 'Project'} Structure\n\n"
-    text = header + tree
+    text = tree
     if len(text) > TELEGRAM_MSG_LIMIT:
-        avail = TELEGRAM_MSG_LIMIT - len(header) - len("\n... truncated")
-        text = header + tree[:avail] + "\n... truncated"
+        avail = TELEGRAM_MSG_LIMIT - len("\n... truncated")
+        text = tree[:avail] + "\n... truncated"
     await update.message.reply_text(text)
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,8 +166,8 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg = (
             f"{model_name} · {format_tokens(total_used)}/{format_tokens(context_limit)} tokens ({total_pct})\n"
-            f"System/Tools:  {format_tokens(input_tokens)} ({system_pct})\n"
-            f"Messages:      {format_tokens(output_tokens)} ({messages_pct})\n"
+            f"Context (In):  {format_tokens(input_tokens)} ({system_pct})\n"
+            f"Response (Out): {format_tokens(output_tokens)} ({messages_pct})\n"
             f"Free Space:    {format_tokens(free_space)} ({free_pct})\n"
         )
         
@@ -181,11 +180,6 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📊 No usage data available yet. Send a message first."
         )
-
-async def tools_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await security_check(update): return
-    if not await check_project_selected(update): return
-    await update.message.reply_text("🛠 Enabled Tools\n✅ list_files\n✅ read_file\n❌ run_shell")
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return

@@ -84,29 +84,6 @@ class SessionInfo:
                 return f"{s}s"
         except (ValueError, TypeError):
             return "N/A"
-    
-    def _format_field(self, label: str, value: Optional[str]) -> str:
-        """Format a field with label."""
-        return f"{label}: {value or 'N/A'}"
-    
-    def render(self) -> str:
-        """Render session info as formatted string."""
-        lines = [
-            self._format_field("Session ID", self.session_id),
-            self._format_field("Name", self.name),
-            self._format_field("Status", self.status),
-            f"Duration: {self.duration()}",
-            self._format_field("Created", self.created),
-            self._format_field("Modified", self.modified),
-            self._format_field("Model", self.selected_model),
-            self._format_field("CWD", self.cwd),
-            self._format_field("Branch", self.branch),
-            self._format_field("Git Root", self.git_root),
-            self._format_field("Repository", self.repository),
-            self._format_field("Workspace", self.workspace_path),
-            self._format_field("Copilot Version", self.copilot_version),
-        ]
-        return "\n".join(lines)
 
 
 @dataclass

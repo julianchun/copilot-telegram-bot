@@ -1,31 +1,50 @@
 # 🤖 copilot-telegram-bot
 
-**Take GitHub Copilot CLI anywhere on Telegram.**
+**Take GitHub Copilot anywhere on Telegram.**
 
-Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the official `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
+Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![SDK](https://img.shields.io/badge/Copilot-SDK-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+---
 
 ## ✨ Key Features
 
-- **🛡️ Real-Time Permission Dialogs**: When the agent needs to read a file or make a decision, you approve it instantly via Telegram inline buttons—**you stay in full control**. No background actions without your knowledge.
-- **📱 Mobile-First, Work Anywhere**: Optimized layouts, blocking (reliable) message output, and touch-friendly buttons. Use Copilot from your phone without limitations.
-- **🚀 Copilot CLI Feature Parity**:
-  - **Agent Mode**: Standard agent assistance
-  - **Plan Mode**: Create an implementation plan before coding
-  - **Model Hot-Swap** (`/model`): Switch LLMs with reasoning effort levels (low/medium/high)
-  - **Usage Metrics** (`/usage`): Per-call and aggregate token costs visible in message footers
-  - **Session Export** (`/share`): Export conversation history as Markdown
-- **📂 Project Isolation**: Each subdirectory is a separate project with automatic SDK restart—guarantees fresh context when you switch.
-- **🛡️ Security-First Design**:
-  - Single-user whitelist (`ALLOWED_USER_ID`)
-  - Read-only filesystem sandbox (no write/execute access)
-  - Per-interaction permission bridge (agent must ask before acting)
-  - **"No write access is a feature, not a limitation"** — safe for untrusted agents
-- **📎 Rich File Attachments**: Upload images and documents; agent sees them as file references in a temp sandbox directory
-- **💾 Zero Database**: Lightweight, portable sessions stored in-memory—no persistence layer required
+### 🤖 Dual Operation Modes
+- **📝 Plan Mode (Architecture):** Uses pre-defined, high-level prompts to help you brainstorm architecture, plan features, and outline project structures before writing a single line of code.
+- **💬 Edit Mode (Development):** The standard Copilot experience. Write code, debug errors, run tests, and execute terminal commands directly from chat.
+
+### 📱 Mobile-First UX
+Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:
+- **Project Switcher:** Instantly switch between defined projects in your workspace via `/start`.
+- **Interactive Permissions:** "Allow" or "Deny" tool execution (e.g., file writes, shell commands) with a single tap.
+- **Smart Options:** When the model asks for clarification, reply via multiple-choice buttons.
+
+### 👁️ Support Multimodal Vision
+Don't just tell Copilot about the bug—**show it**.
+- **Mockup to Code:** Send a photo of a whiteboard sketch and ask Copilot to generate the boilerplate.
+- **Contextual Awareness:** Images are attached seamlessly to the prompt context.
+
+### 📊 Developer-First HUD (Heads-Up Display)
+Every response is equipped with a **Real-time Context Footer**, giving you critical metadata at a glance:
+>```
+>📂 webproject
+>🔀 feature/auth*
+>🤖 gpt-5.2 (1.00x)
+>⚙️ Mode: Planning
+>```
+
+Tool executions get **specialized displays** — bash commands show syntax-highlighted output, file edits show diffs, and long outputs are auto-truncated. Sub-agent activity (when Copilot spawns workers) is surfaced in real-time.
+
+### 🛡️ Security & Control (Human-in-the-Loop)
+- **Workspace Confinement:** Server-side enforcement of workspace paths. All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths.
+- **Two-Tier Permission Model:** Safe, read-only tools (`list_files`, `read_file`, `view`, `glob`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
+- **Transparent Tool Use:** Every tool invocation is displayed to you—auto-approved ones show inline, while dangerous ones pause and wait for your tap.
+- **Chat Lock:** Prevents concurrent requests from interfering with each other.
+- **Zero Database:** Lightweight, portable sessions stored in-memory—no persistence layer required.
 
 ## 🛠️ Prerequisites
 
@@ -41,8 +60,8 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/yourusername/copilot-telegram-bot.git
-    cd copilot-telegram-bot
+    git clone https://github.com/julianchun/copilot-telegram-bot
+    cd copilot-cli-telegram-bot
     ```
 
 2.  **Install Dependencies**
@@ -50,7 +69,7 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
     uv sync
     ```
     
-    > **⚠️ Important:** There's a permission issue with the copilot SDK binary on v0.1.23. After running `uv sync`, fix the file permissions:
+    > **⚠️ Important:** There may be a permission issue with the copilot SDK binary on v0.1.23. After running `uv sync`, fix the file permissions:
     > ```bash
     > chmod +x ./.venv/lib/python3.*/site-packages/copilot/bin/copilot
     > ```
@@ -92,58 +111,82 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
     ```
     
     The bot will:
-    - Print a dashboard with project selection
-    - Load the Copilot CLI session (requires prior `copilot auth`)
-    - Prompt for permissions on every tool invocation (read_file, list_files)
+    - Print a startup splash with CLI version, SDK version, and auth status
+    - Present a project selection keyboard
+    - After project selection, show a cockpit with model, mode, branch, and file/folder stats
+    - Auto-approve safe tools; prompt for dangerous tool permissions via inline buttons
     - Store all state in-memory—no database, pure Telegram state
 
 ## 🎮 Usage
 
 ### Main Menu (`/start`)
-The bot launches into a dashboard showing:
-- **Authentication Status**
-- **Current Directory** (Operating System CWD)
-- **Active Model** (GPT-4o, Claude 3.5, etc.)
-- **Project Selection List**
+The bot launches into a **startup splash** showing:
+- **Copilot CLI & SDK versions**
+- **Authentication status**
+- **Project selection keyboard** (2-column grid with a "Create project" button)
+
+After selecting a project, a **cockpit message** appears with:
+- Current model + billing multiplier
+- Active mode (Plan/Edit)
+- Branch name + dirty status
+- File/folder count in workspace
 
 ### Commands
 
 | Command | Description |
 | :--- | :--- |
 | `/start` | Open the main dashboard and project selector. |
+| `/help` | Show context-aware help with live status indicators. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
-| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4o`). **Note:** Changes reset the session (history cleared). |
+| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
 | `/context` | Display model context and token usage info. |
-| `/tools` | List enabled MCP tools (`list_files`, `read_file`). |
-| `/usage` | Display session usage metrics. |
-| `/share` | Export session to Markdown file. |
+| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
+| `/session` | Show session info and workspace summary. |
+| `/share` | Export full session to Markdown file. |
+| `/cancel` | Cancel an in-progress request. |
 | `/clear` | Reset conversation memory. |
 | `/ls` | List files in current directory. |
 | `/cwd` | Show current working directory. |
 
+## 🔧 Under the Hood
+This bot is built on top of the **`github-copilot-sdk`**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
+- **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async queue bridge.
+- **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery—translating SDK states into Telegram interactions seamlessly.
+- **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
+- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval.
+
 ## ⚡ How Permissions Work
 
-**The Permission Flow** (unique to Telegram):
+The bot uses a **two-tier permission model**:
+
+**Auto-approved tools** (seamless, no interruption):
+`list_files`, `read_file`, `view`, `glob`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
+
+**Requires explicit approval** (inline keyboard prompt):
+`bash`, `edit`, `create`, and any other tool not in the allowlist.
+
+**The Permission Flow** (for dangerous tools):
 
 ```
-Agent wants to read a file (e.g., config.ts)
+Agent wants to run a shell command (e.g., npm install)
           ↓
 You see inline button: "[✅ Allow] [❌ Deny]"
           ↓
 You click "Allow" directly in Telegram
           ↓
-Agent reads file and continues processing
+Agent executes and continues processing
 ```
 
-Rather than background API calls, **every MCP tool invocation prompts you**—you never wonder what the agent is accessing.
+Safe, read-only operations proceed automatically so you're not tapping "Allow" on every file read. Dangerous operations always pause and wait for your explicit approval.
 
 **Permission Dialog Examples:**
-- **File Read**: "🛡️ Permission request: **read_file** with: `['src/app.ts']` — Allow?"
-- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning level prompt → session restarts
+- **Shell Command**: "🛡️ Permission request: **bash** with: `npm install` — Allow?"
+- **File Write**: "🛡️ Permission request: **edit** with: `['src/app.ts']` — Allow?"
+- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → session restarts
 - **Agent Questions**: "❓ **Copilot Asks:** What's your preferred testing framework? [Jest] [Vitest] [Cancel]"
 
-This keeps you **in the loop** and ensures no tool executes without your approval—perfect for collaborative, untrusted, or learning-mode agents.
+This keeps you **in the loop** on critical actions while maintaining a smooth flow for safe operations.
 
 ## 🏗️ Architecture
 
@@ -152,72 +195,32 @@ Three-layer, event-driven design under [src/](src/):
 - **[src/main.py](src/main.py)**: Telegram bot entry point. Initializes handlers and polling.
   
 - **[src/core/](src/core/)** — SDK & State Management:
-  - **[service.py](src/core/service.py)**: Manages `CopilotClient` lifecycle. Registers SDK event handlers (ASSISTANT_MESSAGE_DELTA, TOOL_EXECUTION, SESSION_IDLE). **Key feature**: Permission bridge hooks (`on_pre_tool_use`) intercept tool calls before execution.
-  - **[context.py](src/core/context.py)**: Holds shared session state (working directory, temp files, usage metrics).
-  - **[tools.py](src/core/tools.py)**: Defines read-only MCP tools (`list_files`, `read_file`) with strict path validation.
+  - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks (`content_callback`, `status_callback`, `interaction_callback`, `completion_callback`).
+  - **[session.py](src/core/session.py)**: `SessionManager` — manages `CopilotClient` lifecycle, registers SDK event handlers, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook.
+  - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
+  - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
+  - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
+  - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `read_file`) with strict path validation.
+  - **[git.py](src/core/git.py)**: Branch detection and dirty-tree status for HUD footers.
+  - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
-- **[src/handlers/](src/handlers/)** — Event Handlers:
-  - **[commands.py](src/handlers/commands.py)**: `/start`, `/plan`, `/model`, `/context`, etc.
-  - **[messages.py](src/handlers/messages.py)**: Chat messages. **Implements interaction callback** — when agent needs permission, creates Future + inline keyboard.
-  - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. **Resolves Futures** — when user clicks "Allow"/"Deny", unpacks interaction_id and sets `future.set_result()`.
+- **[src/handlers/](src/handlers/)** — Telegram Handlers:
+  - **[commands.py](src/handlers/commands.py)**: All 13 bot commands (`/start`, `/help`, `/plan`, `/model`, `/cancel`, etc.).
+  - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
+  - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
 - **[src/ui/](src/ui/)** — Output & Formatting:
-  - **[streamer.py](src/ui/streamer.py)**: `MessageSender` class. Accumulates response chunks, sends tool events as permanent messages, final response with footer (cost, model, branch).
-  - **[menus.py](src/ui/menus.py)**: Menu text generation, inline keyboard layouts.
+  - **[streamer.py](src/ui/streamer.py)**: `MessageSender` — sends tool events as permanent messages, final response with footer. Auto-splits at 4000 chars, handles code block safety, retry on rate limits.
+  - **[formatters.py](src/ui/formatters.py)**: Specialized tool display (bash, edit, create, grep, view, report_intent, task, update_todo) with heredoc truncation.
+  - **[menus.py](src/ui/menus.py)**: Menu text generation, inline keyboard layouts, cockpit display.
+  - **[session_exporter.py](src/ui/session_exporter.py)**: Exports full sessions to formatted Markdown files.
 
-### Permission Bridge (Core Innovation)
+## ⚠️ Limitations
+- **Single-user only** — designed for personal use with one `ALLOWED_USER_ID`
+- **Requires Copilot subscription** — a GitHub Copilot Individual, Business, or Enterprise plan is required
+- **Project switching restarts session** — the SDK requires a fresh `CopilotClient` process per working directory, so switching projects clears conversation history
 
-**When agent requests a tool:**
-
-1. SDK fires `on_pre_tool_use` hook in [service.py](src/core/service.py#L369)
-2. Hook calls `interaction_callback("permission", request)` 
-3. Handler creates `asyncio.Future`, stores in `PENDING_INTERACTIONS[id]`, sends inline keyboard
-4. Handler **awaits** the Future (blocks until user responds)
-5. User clicks button → [callbacks.py](src/handlers/callbacks.py#L144) resolves Future with True/False
-6. Hook returns permission decision to SDK, execution continues or stops
-
-This pattern ensures **every tool invocation has explicit user consent**—perfect for safety and transparency.
-
-### Data Flow: Permission Request → Button Click → Agent Resumes
-
-```
-[Agent requests: read_file('config.ts')]
-         ↓ on_pre_tool_use hook
-[permission_bridge → interaction_callback("permission", ...)]
-         ↓ Handler creates Future + keyboard
-[Sends to Telegram: "🛡️ read_file — [Allow] [Deny]"]
-         ↓ Future.await()
-[User clicks [Allow] button]
-         ↓ Button callback
-[_handle_interaction_callback resolves: future.set_result(True)]
-         ↓ Future wakes, returns to permission_bridge
-[SDK receives: {"permissionDecision": "allow"}]
-         ↓
-[Tool execution proceeds, result streamed to agent]
-```
-
-## 🔒 Security Model
-
-**Single-User Whitelist**  
-Only the Telegram user ID in `ALLOWED_USER_ID` can access the bot. All other messages are silently dropped.
-
-**Filesystem Sandbox**  
-- All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths
-- MCP tools (`list_files`, `read_file`) validate paths via `Path.relative_to(root)` — escaping the sandbox is impossible
-- No write, delete, or shell-execute access — read-only by design
-
-**Permission-Per-Tool**  
-- MCP tool invocation triggers a permission dialog before execution
-- User can explicitly deny any file read, preventing information leakage
-- No background API calls without your knowledge
-
-## 🤝 Contributing
-
-Managed by `uv`.
-1.  Fork & Clone
-2.  `uv sync` to setup environment.
-3.  `uv run main.py` to dev.
 
 ## License
 
-MIT
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

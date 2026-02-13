@@ -42,6 +42,7 @@ async def get_git_info(session_branch: Optional[str] = None, session_cwd: Option
             "git status --porcelain",
             cwd=str(root),
             stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         dirty = "*" if stdout.decode().strip() else ""
