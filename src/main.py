@@ -1,4 +1,6 @@
 import logging
+from pathlib import Path
+from telegram import BotCommand
 from telegram.ext import (
     ApplicationBuilder, 
     CommandHandler, 
@@ -7,27 +9,65 @@ from telegram.ext import (
     ConversationHandler,
     filters
 )
-from telegram.constants import ParseMode
 
 from src.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from src.core.service import service
 from src.handlers.commands import (
     start_command, help_command, edit_command, clear_command, 
     usage_command, plan_command, cwd_command, ls_command, 
-    context_command, tools_command,
-    info_command, model_command, share_command, cancel_command,
-    _build_main_menu
+    context_command,
+    model_command, share_command, cancel_command,
+    session_command,
+    build_main_menu
 )
 from src.handlers.messages import chat_handler
 from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME
 
 logger = logging.getLogger(__name__)
 
+BOT_DESCRIPTION = (
+    "The Telegram AI assistant Bot built for developers. "
+    "Bring the power of GitHub Copilot directly into your chats."
+)
+BOT_SHORT_DESCRIPTION = "GitHub Copilot AI assistant for Telegram"
+
+async def setup_bot_commands(application):
+    """Set bot commands visible in Telegram UI."""
+    commands = [
+        BotCommand("start", "Open project selection menu"),
+        BotCommand("help", "Show help manual"),
+        BotCommand("plan", "Architecture & Planning mode"),
+        BotCommand("edit", "Standard Chat/Coding mode"),
+        BotCommand("model", "Switch AI Model"),
+        BotCommand("clear", "Reset conversation memory"),
+        BotCommand("cancel", "Cancel in-progress request"),
+        BotCommand("share", "Export session to Markdown"),
+        BotCommand("usage", "Display session usage metrics"),
+        BotCommand("context", "Display model context info"),
+        BotCommand("session", "Show session info & workspace summary"),
+        BotCommand("ls", "Project file tree"),
+        BotCommand("cwd", "Show current directory"),
+    ]
+    try:
+        # Set bot commands
+        await application.bot.set_my_commands(commands)
+        logger.info(f"✅ Bot commands set successfully ({len(commands)} commands)")
+        
+        # Set bot description
+        await application.bot.set_my_description(BOT_DESCRIPTION)
+        await application.bot.set_my_short_description(BOT_SHORT_DESCRIPTION)
+        logger.info("✅ Bot description set successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to set bot commands/description: {e}", exc_info=True)
+
 async def post_init(application):
+    # Set bot commands
+    await setup_bot_commands(application)
+    
     if ALLOWED_USER_ID:
         try:
-            msg, keyboard = await _build_main_menu()
-            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+            msg, keyboard = await build_main_menu()
+            await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard)
             
             # Set up session end notification callback
             async def notify_session_end(msg: str):
@@ -47,10 +87,20 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN not found in env.")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).post_init(post_init).post_shutdown(post_shutdown).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     
     # Conversation Handler for Project Creation
-    fallback_handlers = [CommandHandler("cancel", lambda u, c: ConversationHandler.END), CommandHandler("start", start_command)]
+    fallback_handlers = [
+        CommandHandler("cancel", start_command),  # Returns to main menu on cancel
+        CommandHandler("start", start_command),
+    ]
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^proj_new$")],
         states={WAITING_PROJECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_project_name)]},
@@ -68,11 +118,10 @@ def main():
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("ls", ls_command))
     app.add_handler(CommandHandler("context", context_command))
-    app.add_handler(CommandHandler("tools", tools_command))
-    app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
+    app.add_handler(CommandHandler("session", session_command))
     
     # Conversation & Callbacks
     app.add_handler(conv_handler)

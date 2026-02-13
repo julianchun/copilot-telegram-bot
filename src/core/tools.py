@@ -1,8 +1,12 @@
 import os
+import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 from copilot.tools import define_tool
 from src.core.context import ctx
+from src.config import FILE_CONTENT_LIMIT
+
+logger = logging.getLogger(__name__)
 
 # --- Tool Definitions ---
 
@@ -69,8 +73,8 @@ async def read_file(params: ReadFileParams) -> str:
             # Removed ctx.report_status() - SDK handles this via TOOL_EXECUTION_COMPLETE
             ctx.track_file(params.path)
             
-            if len(content) > 100000:
-                return content[:100000] + "\n... (File truncated)"
+            if len(content) > FILE_CONTENT_LIMIT:
+                return content[:FILE_CONTENT_LIMIT] + "\n... (File truncated)"
             return content
     except UnicodeDecodeError:
         return "Error: Binary or unsupported file encoding."

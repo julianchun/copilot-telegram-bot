@@ -39,7 +39,7 @@ wheels = [
 ]
 
 [[package]]
-name = "copilot-cli-telegram"
+name = "copilot-telegram-bot"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -51,7 +51,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "github-copilot-sdk", specifier = ">=0.1.23" },
+    { name = "github-copilot-sdk", specifier = "==0.1.23" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-telegram-bot", specifier = ">=20.0" },

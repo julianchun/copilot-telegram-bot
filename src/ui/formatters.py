@@ -188,3 +188,26 @@ def truncate_text(text: str, max_length: int = 150) -> str:
         return cleaned
     
     return cleaned[:max_length] + "..."
+
+
+# ── Helpers relocated from handlers/commands.py ──────────────────────────────
+
+def format_tokens(n: int) -> str:
+    """Format token count for display (e.g., 12500 → '12.5k')."""
+    if n >= 1000:
+        return f"{n/1000:.1f}k"
+    return str(n)
+
+
+def format_percentage(used: int, limit: int) -> str:
+    """Calculate and format percentage."""
+    if limit == 0:
+        return "0%"
+    pct = (used / limit) * 100
+    return f"{pct:.0f}%"
+
+
+def get_model_context_limit(model_name: str) -> int:
+    """Lookup context window size for a model via service's SDK-cached data."""
+    from src.core.service import service
+    return service.get_model_context_limit(model_name)

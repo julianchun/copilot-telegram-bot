@@ -12,4 +12,6 @@ wheels/
 .env
 .DS_Store
 .gemini/
+.docs
+copilot-instructions.md
 GEMINI.md

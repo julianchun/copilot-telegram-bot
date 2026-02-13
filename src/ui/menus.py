@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Dict, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import WORKSPACE_PATH, GRANTED_PROJECT_PATHS
 
@@ -41,7 +41,7 @@ def get_project_keyboard(root_path: Path):
     buttons.append([InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")])
     return InlineKeyboardMarkup(buttons)
 
-def get_model_keyboard(models_data):
+def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     btns = []
     for m in models_data:
         m_id = m.get("id", "unknown")
@@ -50,47 +50,89 @@ def get_model_keyboard(models_data):
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 
-def get_main_menu_content(auth_status, version, current_model, cwd, project_selected=False):
-    # Shorten CWD for display
-    display_cwd = str(cwd)
-    # Show fallback if model not yet determined
-    model_display = current_model if current_model else "Auto (determined on first use)"
-    
-    msg = (
-        f"🚀 **Copilot CLI-Telegram**\n"
-        f"**User:** `{auth_status}`\n"
-        f"**Copilot Version:** `{version}`\n"
-        f"**Workspace:** `{display_cwd}`\n"
-        f"**Model:** `{model_display}`\n\n"
-        "**Core Workflow**\n"
+def _command_reference() -> str:
+    """Return the full command reference block."""
+    return (
+        "/start - Open project selection menu\n"
+        "/help - Show help manual\n\n"
+        "Core Workflow\n"
         "/plan - Architecture & Planning mode\n"
         "/edit - Standard Chat/Coding mode\n\n"
-        "**Session Control**\n"
+        "Session Control\n"
         "/model - Switch AI Model\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
         "/usage - Display session usage metrics\n"
         "/context - Display model context info\n"
-        "/info  - Display session debug info\n\n"
-        "**Navigation Command**\n"
-        "/ls    - List files in current directory\n"
-        "/cwd   - Show current directory\n"
+        "/session - Show session info and workspace summary\n\n"
+        "Navigation\n"
+        "/ls - Project file tree\n"
+        "/cwd - Show current directory\n"
     )
-    
-    # Only show "Action Required" if no project is selected
-    if not project_selected:
-        msg += "\n⚠️ **Action Required:** Select or create a project below to begin."
-    
-    return msg
+
+
+def get_start_splash_content(auth_status: str, cli_version: str, sdk_version: str = "") -> str:
+    """Minimal start splash — bot identity + project picker prompt. No commands."""
+    sdk_line = f"SDK version: {sdk_version}\n" if sdk_version else ""
+    return (
+        f"🚀 Copilot CLI-Telegram\n"
+        f"User: {auth_status}\n"
+        f"CLI version: {cli_version}\n"
+        f"{sdk_line}\n"
+        "⚠️ Select a project below to begin."
+    )
+
+
+def get_cockpit_content(
+    project_name: str,
+    model: str,
+    mode: str,
+    path: str,
+    branch: str,
+    file_count: int,
+    folder_count: int,
+) -> str:
+    """Cockpit message sent after project selection — stats + commands."""
+    branch_line = f"🔀 Branch: {branch}\n" if branch else ""
+    return (
+        f"✅ Project Loaded: {project_name}\n\n"
+        f"🤖 Model: {model}\n"
+        f"⚙️ Mode: {mode}\n"
+        f"📂 Path: {path}\n"
+        f"{branch_line}"
+        f"📊 Stats: {file_count} files · {folder_count} folders\n\n"
+        f"{_command_reference()}"
+    )
+
+
+def get_help_content(
+    auth_status: str,
+    version: str,
+    current_model: str,
+    cwd: str,
+    project_selected: bool = False,
+) -> str:
+    """Status-aware help with 🟢/🔴 indicator and full command list."""
+    status_dot = "🟢" if project_selected else "🔴"
+    model_display = current_model if current_model else "Auto"
+    return (
+        f"{status_dot} Copilot CLI-Telegram\n"
+        f"User: {auth_status}\n"
+        f"Workspace: {cwd}\n"
+        f"Model: {model_display}\n\n"
+        f"{_command_reference()}"
+        + ("" if project_selected else "\n⚠️ Action Required: Select or create a project to begin.")
+    )
+
 
 def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effort: str = None):
     """Build inline keyboard for reasoning effort selection."""
     effort_labels = {
-        "low": "🐢 Low",
-        "medium": "⚡ Medium", 
-        "high": "🔥 High",
-        "xhigh": "💎 XHigh",
+        "low": "Low",
+        "medium": "Medium", 
+        "high": "High",
+        "xhigh": "XHigh",
     }
     btns = []
     for effort in supported_efforts:
@@ -100,5 +142,5 @@ def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effor
         btns.append(InlineKeyboardButton(label, callback_data=f"reasoning:{model_id}:{effort}"))
     buttons = _build_button_grid(btns)
     # Add skip button to use default
-    buttons.append([InlineKeyboardButton("⏭️ Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
+    buttons.append([InlineKeyboardButton("Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
     return InlineKeyboardMarkup(buttons)

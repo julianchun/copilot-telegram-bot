@@ -4,20 +4,29 @@ import time
 import logging
 from typing import Any
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from src.config import ALLOWED_USER_ID
+from src.config import INTERACTION_TIMEOUT
 from src.core.service import service
 from src.ui.streamer import MessageSender
+
 from src.handlers.utils import security_check, check_project_selected
 
 logger = logging.getLogger(__name__)
 
+_PLAN_PROMPT = (
+    "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n\n"
+    "1. Research the codebase with read-only tools.\n"
+    "2. Ask clarifying questions if needed.\n"
+    "3. Deliver a structured, phased plan with short bullets, file references, and rationale.\n\n"
+    "Rules: No code blocks. Keep it scannable and mobile-friendly.\n\n"
+    "---\n\n"
+)
+
 # Pending Interactions (Future map) - Shared with callbacks
 # Structure: {interaction_id: {"future": Future, "timestamp": float, "chat_id": int, "context": ContextTypes.DEFAULT_TYPE}}
-PENDING_INTERACTIONS = {}
-INTERACTION_TTL = 300  # 5 minutes (matches send_and_wait timeout)
+PENDING_INTERACTIONS: dict[str, dict[str, Any]] = {}
+INTERACTION_TTL = INTERACTION_TIMEOUT  # matches send_and_wait timeout
 
 def cleanup_pending_interactions():
     """Removes interactions that are older than INTERACTION_TTL."""
@@ -54,8 +63,14 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         await update.message.reply_text("⚠️ Session expired. Use /start to begin a new session.")
         return
     
+    # Prevent sending while session is busy (feature #5)
+    if service._chat_lock.locked():
+        await update.message.reply_text("⏳ Please wait for the current request to finish.")
+        return
+    
     user_text = override_text or (update.message.text if update.message else "") or ""
 
+    attachments = None  # SDK-native attachments list
     attachment = update.message.document or (update.message.photo[-1] if update.message.photo else None)
     if attachment:
         try:
@@ -67,9 +82,10 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             temp_dir = service.get_temp_dir()
             download_path = temp_dir / original_name
             await file_obj.download_to_drive(custom_path=download_path)
-            rel_path = f"@{temp_dir.name}/{original_name}"
-            user_text = f"{rel_path} {update.message.caption or ''}".strip()
-            await update.message.reply_text(f"📎 Uploaded: `{original_name}`", parse_mode=ParseMode.MARKDOWN)
+            # Use SDK-native attachments (feature #7)
+            attachments = [{"type": "file", "path": str(download_path)}]
+            user_text = (update.message.caption or "Describe this file").strip()
+            await update.message.reply_text(f"📎 Uploaded: {original_name}")
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             await update.message.reply_text(f"⚠️ Upload failed: {e}")
@@ -78,22 +94,25 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     if not user_text: return
 
     if context.user_data.get('plan_mode'):
-        user_text = "PLAN MODE: Focus on high-level architecture. " + user_text
+        user_text = _PLAN_PROMPT + user_text
 
-    # Send placeholder — will be edited into the first real content
-    response_msg = await update.message.reply_text("`Thinking...`", parse_mode=ParseMode.MARKDOWN)
-    sender = MessageSender(response_msg)
+    # Initialize message sender with the user's message chat
+    sender = MessageSender(update.message)
+    await sender.create_working()  # Show "Working..." immediately at the top
     completion_event = asyncio.Event()
     response_chunks: list[str] = []
+    tool_event_count = 0  # Track tool events
 
     # ---- Callbacks wired into service.chat() ----
 
     async def tool_log(status: str):
         """Handle tool status events. Send all as permanent messages."""
+        nonlocal tool_event_count
         if not status:  # Empty status = clear signal, ignore
             return
         logger.debug(f"🔍 tool_log received: {repr(status)}")
-        await sender.send_tool_event(status)
+        await sender.send_tool_event(status)  # This now also updates "Working..."
+        tool_event_count += 1
 
     async def stream_content(text_chunk: str):
         """Accumulate response chunks (no streaming to Telegram)."""
@@ -125,12 +144,17 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             if kind == "permission":
                 tool_name = getattr(payload, 'tool_name', 'unknown')
                 args = getattr(payload, 'arguments', {})
-                # Compact permission request format
-                args_str = ""
+                
+                # Plain text permission request (no markdown)
+                msg_text = f"🛡️ Permission: {tool_name}"
+                
+                # Add args preview if present
                 if args and len(str(args)) > 0:
                     args_preview = str(args)[:80]
-                    args_str = f" with: `{args_preview}{'...' if len(str(args)) > 80 else ''}`"
-                msg_text = f"🛡️ Permission request: **{tool_name}**{args_str}\n\nAllow?"
+                    suffix = '...' if len(str(args)) > 80 else ''
+                    msg_text += f"\nArguments: {args_preview}{suffix}"
+                
+                msg_text += "\n\nAllow?"
                 # Store tool_name in interaction_data for later reference
                 PENDING_INTERACTIONS[interaction_id]["tool_name"] = tool_name
                 buttons = [[
@@ -143,15 +167,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                 prompt = getattr(payload, 'message', str(payload))
                 options = getattr(payload, 'options', [])
                 
-                # Edit placeholder to show waiting state if not yet used
-                if not sender._placeholder_used:
-                    try:
-                        await sender.placeholder.edit_text("⏳ *Waiting for your input...*", parse_mode=ParseMode.MARKDOWN)
-                        sender._placeholder_used = True
-                    except Exception as e:
-                        logger.debug(f"Could not edit placeholder: {e}")
-                
-                msg_text = f"❓ **Copilot Asks:**\n{prompt}\n\nSelect an option:"
+                # Plain text prompt (no markdown)
+                msg_text = f"❓ Copilot Asks:\n{prompt}\n\nSelect an option:"
                 buttons = []
                 for i, opt in enumerate(options):
                     label = str(opt)
@@ -186,6 +203,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             status_callback=tool_log, 
             interaction_callback=interaction_callback,
             completion_callback=on_completion,
+            attachments=attachments,
         )
         
         # Wait for completion signal
@@ -209,7 +227,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         except Exception as e:
             logger.error(f"Footer generation failed: {e}")
         
-        # Send blockin response with footer
+        # Send blocking response with footer
         full_response = "".join(response_chunks)
         await sender.send_response(full_response, footer)
 
@@ -230,12 +248,12 @@ async def _send_interaction_msg(update, context, chat_id, text, buttons):
     """Send an inline-keyboard message, with fallback to context.bot.send_message."""
     markup = InlineKeyboardMarkup(buttons)
     try:
-        await update.message.reply_text(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(text, reply_markup=markup)
     except Exception as send_err:
         logger.error(f"❌ Failed to send interaction message: {send_err}", exc_info=True)
         if chat_id and context:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
             except Exception as fallback_err:
                 logger.error(f"❌ Fallback send also failed: {fallback_err}", exc_info=True)
                 raise
