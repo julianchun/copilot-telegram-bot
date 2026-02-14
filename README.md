@@ -61,7 +61,7 @@ Tool executions get **specialized displays** — bash commands show syntax-highl
 1.  **Clone the Repository**
     ```bash
     git clone https://github.com/julianchun/copilot-telegram-bot
-    cd copilot-cli-telegram-bot
+    cd copilot-telegram-bot
     ```
 
 2.  **Install Dependencies**
@@ -196,7 +196,7 @@ Three-layer, event-driven design under [src/](src/):
   
 - **[src/core/](src/core/)** — SDK & State Management:
   - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks (`content_callback`, `status_callback`, `interaction_callback`, `completion_callback`).
-  - **[session.py](src/core/session.py)**: `SessionManager` — manages `CopilotClient` lifecycle, registers SDK event handlers, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook.
+  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook.
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.

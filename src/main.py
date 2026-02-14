@@ -21,7 +21,7 @@ from src.handlers.commands import (
     build_main_menu
 )
 from src.handlers.messages import chat_handler
-from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME
+from src.handlers.callbacks import button_handler, create_project_name, WAITING_PROJECT_NAME, cancel_create_project, reject_command_during_creation
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ async def post_init(application):
     
     if ALLOWED_USER_ID:
         try:
-            msg, keyboard = await build_main_menu()
+            msg, keyboard, _ = await build_main_menu()
             await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard)
             
             # Set up session end notification callback
@@ -97,16 +97,23 @@ def main():
     )
     
     # Conversation Handler for Project Creation
-    fallback_handlers = [
-        CommandHandler("cancel", start_command),  # Returns to main menu on cancel
-        CommandHandler("start", start_command),
-    ]
+    # Must be registered BEFORE standalone command handlers so it has priority
+    # when a conversation is active (WAITING_PROJECT_NAME state).
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(button_handler, pattern="^proj_new$")],
-        states={WAITING_PROJECT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_project_name)]},
-        fallbacks=fallback_handlers,
+        states={
+            WAITING_PROJECT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, create_project_name),
+                CommandHandler("cancel", cancel_create_project),
+                MessageHandler(filters.COMMAND, reject_command_during_creation),
+            ]
+        },
+        fallbacks=[
+            CallbackQueryHandler(button_handler),  # Handle proj: clicks during creation
+        ],
         per_message=False
     )
+    app.add_handler(conv_handler)
     
     # Command Handlers
     app.add_handler(CommandHandler("start", start_command))
@@ -123,8 +130,7 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("session", session_command))
     
-    # Conversation & Callbacks
-    app.add_handler(conv_handler)
+    # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))
     
     # Message Handler (Chat)

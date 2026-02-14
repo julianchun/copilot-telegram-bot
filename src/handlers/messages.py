@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 
 _PLAN_PROMPT = (
     "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n\n"
-    "1. Research the codebase with read-only tools.\n"
+    "1. Research the necessary information.\n"
     "2. Ask clarifying questions if needed.\n"
     "3. Deliver a structured, phased plan with short bullets, file references, and rationale.\n\n"
     "Rules: No code blocks. Keep it scannable and mobile-friendly.\n\n"
+    "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets)."
     "---\n\n"
 )
 
@@ -231,9 +232,14 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         full_response = "".join(response_chunks)
         await sender.send_response(full_response, footer)
 
+    except asyncio.CancelledError:
+        # /cancel was invoked — just dismiss the working message silently
+        logger.info("Chat request cancelled by user via /cancel")
+        await sender.delete_working()
     except asyncio.TimeoutError as e:
         error_msg = str(e)
         logger.error(f"Chat Timeout Error: {error_msg}")
+        await sender.delete_working()
         if "session.idle" in error_msg:
             user_msg = error_msg.replace("waiting for session.idle", "waiting for user selection")
             await update.message.reply_text(f"⚠️ Error: {user_msg}")
@@ -241,6 +247,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             await update.message.reply_text(f"⚠️ Error: {error_msg}")
     except Exception as e:
         logger.error(f"Chat Error: {e}")
+        await sender.delete_working()
         await update.message.reply_text(f"⚠️ Error: {str(e)}")
 
 

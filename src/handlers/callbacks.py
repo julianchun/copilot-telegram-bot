@@ -14,6 +14,32 @@ logger = logging.getLogger(__name__)
 WAITING_PROJECT_NAME = 1
 
 
+async def _refresh_auth_info(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Refresh auth info in context after service is started."""
+    try:
+        auth = await service.get_auth_status()
+        context.user_data['auth'] = auth
+    except Exception as e:
+        logger.debug(f"Auth refresh failed, keeping existing value: {e}")
+
+
+def _build_project_selected_message(context: ContextTypes.DEFAULT_TYPE, project_name: str, action: str = "Selected") -> str:
+    """Build the edited start message shown after project selection/creation.
+    
+    Reuses version info stored in context.user_data by start_command.
+    """
+    auth = context.user_data.get('auth', 'Unknown')
+    cli_version = context.user_data.get('cli_version', 'Unknown')
+    sdk_version = context.user_data.get('sdk_version', 'Unknown')
+    return (
+        f"🚀 Copilot CLI-Telegram\n"
+        f"User: {auth}\n"
+        f"CLI version: {cli_version}\n"
+        f"SDK version: {sdk_version}\n"
+        f"✅ {action}: {project_name}"
+    )
+
+
 async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYPE, query=None):
     """Common project-switching logic used by proj:, proj_granted:, and create_project_name.
     
@@ -22,10 +48,12 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     context.user_data['plan_mode'] = False
     await service.set_working_directory(str(path))
 
-    # Edit the start message to remove inline keyboard
+    # Edit the start message to remove inline keyboard and show final status
     if query:
         try:
-            await query.edit_message_text(f"✅ Selected Project: {path.name}")
+            await _refresh_auth_info(context)
+            selected_msg = _build_project_selected_message(context, path.name, "Selected")
+            await query.edit_message_text(selected_msg)
         except Exception as e:
             logger.warning(f"⚠️ Failed to edit start message: {e}")
 
@@ -176,29 +204,73 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_reasoning_callback(query, context)
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
+            return ConversationHandler.END
         elif data.startswith("proj:"):
             await _handle_project_callback(query, context)
+            return ConversationHandler.END
         elif data == "proj_new":
+            context.user_data['start_message_id'] = query.message.message_id
+            context.user_data['start_chat_id'] = query.message.chat_id
             await query.message.reply_text("New project name:")
             return WAITING_PROJECT_NAME
     except Exception as e:
         logger.error(f"❌ Error handling button callback '{data}': {e}", exc_info=True)
+    return ConversationHandler.END
 
 
 async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
-    name = re.sub(r"\W+", "_", update.message.text).strip("_")
+    name = re.sub(r"[^\w-]+", "_", update.message.text).strip("_")
     if not name:
         await update.message.reply_text("⚠️ Invalid name. Try again or /cancel.")
         return WAITING_PROJECT_NAME
     path = WORKSPACE_PATH / name
-    if path.exists():
+    already_exists = path.exists()
+    if already_exists:
         await update.message.reply_text(f"⚠️ Project {name} already exists. Switched to it.")
     else:
         path.mkdir(exist_ok=True)
         await update.message.reply_text(f"✅ Created: {name}")
     try:
         await _switch_project(path, update.message, context)
+        # Hide the inline keyboard on the original /start message
+        start_msg_id = context.user_data.pop('start_message_id', None)
+        start_chat_id = context.user_data.pop('start_chat_id', None)
+        if start_msg_id and start_chat_id:
+            try:
+                await _refresh_auth_info(context)
+                action = "Selected" if already_exists else "Created"
+                selected_msg = _build_project_selected_message(context, name, action)
+                await context.bot.edit_message_text(
+                    chat_id=start_chat_id,
+                    message_id=start_msg_id,
+                    text=selected_msg,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to edit start message: {e}")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error setting directory: {e}")
     return ConversationHandler.END
+
+
+async def cancel_create_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel project creation and re-show the start menu with project keyboard."""
+    if not await security_check(update): return
+    logger.info("Project creation cancelled, returning to start menu")
+    # Clean up stored message IDs
+    context.user_data.pop('start_message_id', None)
+    context.user_data.pop('start_chat_id', None)
+    from src.handlers.commands import build_main_menu
+    msg, keyboard, sys_info = await build_main_menu()
+    context.user_data['cli_version'] = sys_info[0]
+    context.user_data['auth'] = sys_info[1]
+    context.user_data['sdk_version'] = sys_info[2]
+    await update.message.reply_text(msg, reply_markup=keyboard)
+    return ConversationHandler.END
+
+
+async def reject_command_during_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject slash commands (other than /cancel) during project name input."""
+    if not await security_check(update): return
+    await update.message.reply_text("⚠️ Please enter a project name or use /cancel to go back.")
+    return WAITING_PROJECT_NAME

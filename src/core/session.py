@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 _TOOL_ALLOWLIST = frozenset({
     "report_intent", "task", "list_files", "read_file",
-    "view", "glob", "fetch_copilot_cli_documentation",
-    "ask_user", "update_todo"
+    "view", "glob", "grep", "fetch_copilot_cli_documentation",
+    "ask_user", "update_todo", "edit"
 })
 
 
@@ -218,8 +218,9 @@ class SessionMixin:
                 "mode": "append",
                 "content": (
                     "You are assisting via a Telegram bot. "
-                    "Respond concisely and use Plain text. "
-                    "Avoid HTML tags. Keep responses focused and actionable."
+                    "Respond concisely and always use Plain text. "
+                    "Avoid HTML tags. Keep responses focused and actionable. "
+                    "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets)."
                 ),
             },
         }
@@ -244,7 +245,7 @@ class SessionMixin:
         self.usage_tracker = SessionUsageTracker()
         self.usage_tracker.session_start_time = time.time()
         if self.current_model:
-            self.usage_tracker._selected_model = self.current_model
+            self.usage_tracker.selected_model = self.current_model
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
 
     def _extract_session_start_context(self):
@@ -322,6 +323,30 @@ class SessionMixin:
         except Exception as e:
             logger.error(f"❌ Permission request failed: {e}", exc_info=True)
             return {"permissionDecision": "deny"}
+
+    async def _refresh_git_info(self):
+        """Re-query git branch/status and update session_info (3s timeout)."""
+        try:
+            cwd = self.session_info.cwd or str(ctx.root_path)
+            proc = await asyncio.wait_for(
+                asyncio.create_subprocess_shell(
+                    "git rev-parse --abbrev-ref HEAD",
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                ),
+                timeout=3.0,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            branch = stdout.decode().strip()
+            if branch:
+                if branch != self.session_info.branch:
+                    logger.info(f"🔀 Git branch updated: {self.session_info.branch} → {branch}")
+                self.session_info.branch = branch
+        except asyncio.TimeoutError:
+            logger.warning("⏱️ Git info refresh timed out (3s)")
+        except Exception as e:
+            logger.debug(f"Git info refresh failed: {e}")
 
     async def _user_input_bridge(self, request, invocation=None):
         """Bridge between SDK's ask_user format and Telegram interaction_callback."""
