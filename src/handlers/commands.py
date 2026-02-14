@@ -26,29 +26,50 @@ def _get_sdk_version() -> str:
 async def _get_system_info() -> tuple[str, str, str]:
     """Get CLI version, auth status, and SDK version with error handling."""
     sdk_version = _get_sdk_version()
+    
+    # Get CLI version (works without service running via shell fallback)
+    cli_version = "Unknown"
     try:
         cli_version = await service.get_cli_version()
-        auth = await service.get_auth_status()
-        return cli_version, auth, sdk_version
-    except Exception:
-        return "Unknown", "Error", sdk_version
+    except Exception as e:
+        logger.warning(f"Failed to get CLI version: {e}")
+    
+    # Get auth status only if service is already running (avoids premature startup)
+    auth = "User"
+    try:
+        if service._is_running:
+            auth = await service.get_auth_status()
+        else:
+            # Don't start service just for auth check at startup
+            logger.debug("Service not running yet, skipping auth check")
+    except Exception as e:
+        logger.warning(f"Failed to get auth status: {e}")
+    
+    return cli_version, auth, sdk_version
 
 
 # --- Handlers ---
 
 async def build_main_menu() -> tuple:
-    """Build main menu message and keyboard. Shared by start_command and post_init."""
+    """Build main menu message and keyboard. Shared by start_command and post_init.
+    
+    Returns (message_text, keyboard, (cli_version, auth, sdk_version)).
+    """
     from src.ui.menus import get_start_splash_content, get_project_keyboard
     cli_version, auth, sdk_version = await _get_system_info()
     msg = get_start_splash_content(auth, cli_version, sdk_version)
     keyboard = get_project_keyboard(WORKSPACE_PATH)
-    return msg, keyboard
+    return msg, keyboard, (cli_version, auth, sdk_version)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("/start command received")
     if not await security_check(update): return
-    msg, keyboard = await build_main_menu()
+    msg, keyboard, sys_info = await build_main_menu()
+    # Store version info for reuse when editing start message after project selection
+    context.user_data['cli_version'] = sys_info[0]
+    context.user_data['auth'] = sys_info[1]
+    context.user_data['sdk_version'] = sys_info[2]
     await update.message.reply_text(msg, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -64,23 +85,27 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    report = service.get_usage_report()
+    report = await service.get_usage_report()
     await update.message.reply_text(report)
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
+    context.user_data['plan_mode'] = False
     await service.reset_session()
     await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel the currently processing request using SDK session.abort()."""
     if not await security_check(update): return
-    if not await check_project_selected(update): return
     if not service.session:
         await update.message.reply_text("⚠️ No active session.")
         return
+    if not service._chat_lock.locked():
+        await update.message.reply_text("ℹ️ No request in progress.")
+        return
     try:
+        service._cancelled = True
         await service.session.abort()
         await update.message.reply_text("🛑 Request cancelled.")
     except Exception as e:
@@ -234,8 +259,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cwd = session_info.cwd or str(ctx.root_path)
     branch = session_info.branch or "N/A"
 
-    # Message count from tracker
-    total_cost = sum(u.cost for u in tracker.model_usage.values())
+    total_requests = sum(u.requests for u in tracker.model_usage.values())
 
     msg = (
         f"📋 Session Info\n"
@@ -245,7 +269,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Created: {created_str}\n"
         f"• Model: {model}\n"
         f"• Mode: {mode}\n"
-        f"• Total Request cost: {total_cost}\n\n"
+        f"• Total Requests: {total_requests}\n"
         f"📂 Workspace\n"
         f"• Project: {service.project_name or Path(cwd).name}\n"
         f"• Path: {cwd}\n"
@@ -269,7 +293,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"\n💳 Quota Status:\n{quota_summary}\n\n"
 
     # Usage summary
-    usage_summary = tracker.get_usage_summary()
+    usage_summary = await tracker.get_usage_summary()
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)

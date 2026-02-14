@@ -82,6 +82,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.session_info = SessionInfo()
 
         self._chat_lock = asyncio.Lock()
+        self._cancelled = False  # Set by /cancel to signal abort to chat_handler
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
@@ -190,9 +191,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             logger.error(f"get_usage_metadata failed: {e}")
             return "Unknown", "Auto", "0.0"
 
-    def get_usage_report(self) -> str:
+    async def get_usage_report(self) -> str:
         """Returns formatted usage stats from the accumulated SessionUsageTracker."""
-        return self.usage_tracker.get_usage_summary()
+        return await self.usage_tracker.get_usage_summary()
 
     # ── Session export ────────────────────────────────────────────────
 
@@ -408,6 +409,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
           attachments — optional list of SDK attachment dicts.
         """
         async with self._chat_lock:
+            self._cancelled = False
             if not self.session:
                 await self.start()
             self.current_callback = content_callback
@@ -420,6 +422,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 if attachments:
                     msg_options["attachments"] = attachments
                 await self.session.send_and_wait(msg_options, timeout=INTERACTION_TIMEOUT)
+                # abort() causes send_and_wait to return normally once session.idle fires
+                if self._cancelled:
+                    raise asyncio.CancelledError("Request cancelled by user")
             finally:
                 self.current_callback = None
                 ctx.status_callback = None

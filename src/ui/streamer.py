@@ -39,18 +39,22 @@ class MessageSender:
             except Exception as e:
                 logger.warning(f"Failed to create working message: {e}")
 
+    async def delete_working(self):
+        """Delete the 'Working...' message if it exists."""
+        if self._working_msg:
+            try:
+                await asyncio.wait_for(self._working_msg.delete(), timeout=2.0)
+            except Exception as e:
+                logger.debug(f"Could not delete working message: {e}")
+            finally:
+                self._working_msg = None
+
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
         
         Deletes "Working..." message first, then sends all response chunks as new messages.
         """
-        # Delete working message if it exists
-        if self._working_msg:
-            try:
-                await asyncio.wait_for(self._working_msg.delete(), timeout=2.0)
-                self._working_msg = None
-            except Exception as e:
-                logger.debug(f"Could not delete working message: {e}")
+        await self.delete_working()
         
         # Build full response with footer
         full = text
