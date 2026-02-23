@@ -158,6 +158,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/ping` | Check CLI connectivity and measure latency. |
 | `/allowall` | Bypass tool permission prompts (allow all tools automatically). |
+| `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. |
 | `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood
