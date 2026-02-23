@@ -352,9 +352,15 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Update the Copilot CLI to the latest version."""
     if not await security_check(update): return
     import shutil
-    cli = shutil.which("copilot")
-    if not cli:
-        await update.message.reply_text("⚠️ Copilot CLI not found in PATH.")
+    # Try shutil.which first, then fall back to known install locations
+    cli = (
+        shutil.which("copilot")
+        or getattr(service.client, 'options', {}).get('cli_path')
+        or os.path.expanduser("~/.local/bin/copilot")
+        or "/usr/local/bin/copilot"
+    )
+    if not cli or not Path(cli).exists():
+        await update.message.reply_text("⚠️ Copilot CLI not found.")
         return
     msg = await update.message.reply_text("🔄 Updating Copilot CLI...")
     try:
