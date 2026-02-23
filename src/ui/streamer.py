@@ -54,8 +54,15 @@ class MessageSender:
             finally:
                 self._working_msg = None
 
+    # Max chars to show in a live streaming edit (leave headroom for escape overhead + cursor)
+    _STREAM_PREVIEW_LIMIT = 3800
+
     async def stream_delta(self, chunk: str):
-        """Accumulate streaming delta and edit Telegram message at most once per second."""
+        """Accumulate streaming delta and edit Telegram message at most once per second.
+
+        Shows a rolling tail window of the last _STREAM_PREVIEW_LIMIT chars during live
+        editing so we never exceed Telegram's 4096-char message limit mid-stream.
+        """
         import time as _time
         self._stream_buf += chunk
         now = _time.monotonic()
@@ -63,7 +70,13 @@ class MessageSender:
             return
         self._stream_last_edit = now
 
-        preview = self._stream_buf
+        # Show the tail of the buffer if it's grown too long
+        buf = self._stream_buf
+        if len(buf) > self._STREAM_PREVIEW_LIMIT:
+            preview = "…" + buf[-self._STREAM_PREVIEW_LIMIT:]
+        else:
+            preview = buf
+
         if not self._stream_msg:
             # Replace "Working..." with the live message
             await self.delete_working()
@@ -80,23 +93,31 @@ class MessageSender:
                 logger.debug(f"Stream edit failed: {e}")
 
     async def finalize_stream(self, footer: str = ""):
-        """Replace streaming message with the final content + footer."""
-        if not self._stream_msg:
-            return
+        """Replace streaming message with the full final content, split across pages if needed."""
+        msg = self._stream_msg
         text = self._stream_buf
+        self._stream_msg = None
+        self._stream_buf = ""
+
+        if not msg:
+            return
+
+        full = text
         if footer:
-            text = text + "\n\n---\n" + footer
+            full = text + "\n\n---\n" + footer
+
+        chunks = self._split_message(full)
+        if not chunks:
+            chunks = ["_(empty response)_"]
+
+        # Edit the live streaming message in-place with the first chunk, then send the rest
         try:
-            safe = html_lib.escape(text)
-            await self._edit_message(self._stream_msg, safe)
+            await self._edit_message(msg, html_lib.escape(chunks[0]))
         except Exception:
-            # If edit fails (e.g., message too long), fall back to sending new messages
-            chunks = self._split_message(text)
-            for chunk in chunks:
-                await self._safe_send(html_lib.escape(chunk))
-        finally:
-            self._stream_msg = None
-            self._stream_buf = ""
+            await self._safe_send(html_lib.escape(chunks[0]))
+
+        for chunk in chunks[1:]:
+            await self._safe_send(html_lib.escape(chunk))
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.
