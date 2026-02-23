@@ -27,6 +27,10 @@ class MessageSender:
     def __init__(self, message: Message):
         self.chat: Chat = message.chat
         self._working_msg: Message | None = None  # The "Working..." message to delete before final response
+        self._stream_msg: Message | None = None   # Live-edited streaming message
+        self._stream_buf: str = ""                # Accumulated streaming text
+        self._stream_last_edit: float = 0.0       # Timestamp of last edit
+        self._STREAM_DEBOUNCE = 1.0               # Minimum seconds between edits
 
     async def send_tool_event(self, detail: str):
         """Send a separate permanent message for each tool event."""
@@ -49,6 +53,50 @@ class MessageSender:
                 logger.debug(f"Could not delete working message: {e}")
             finally:
                 self._working_msg = None
+
+    async def stream_delta(self, chunk: str):
+        """Accumulate streaming delta and edit Telegram message at most once per second."""
+        import time as _time
+        self._stream_buf += chunk
+        now = _time.monotonic()
+        if now - self._stream_last_edit < self._STREAM_DEBOUNCE:
+            return
+        self._stream_last_edit = now
+
+        preview = self._stream_buf
+        if not self._stream_msg:
+            # Replace "Working..." with the live message
+            await self.delete_working()
+            try:
+                safe = html_lib.escape(preview) + " ✍️"
+                self._stream_msg = await self.chat.send_message(safe, parse_mode=ParseMode.HTML)
+            except Exception as e:
+                logger.debug(f"Stream start failed: {e}")
+        else:
+            try:
+                safe = html_lib.escape(preview) + " ✍️"
+                await self._edit_message(self._stream_msg, safe)
+            except Exception as e:
+                logger.debug(f"Stream edit failed: {e}")
+
+    async def finalize_stream(self, footer: str = ""):
+        """Replace streaming message with the final content + footer."""
+        if not self._stream_msg:
+            return
+        text = self._stream_buf
+        if footer:
+            text = text + "\n\n---\n" + footer
+        try:
+            safe = html_lib.escape(text)
+            await self._edit_message(self._stream_msg, safe)
+        except Exception:
+            # If edit fails (e.g., message too long), fall back to sending new messages
+            chunks = self._split_message(text)
+            for chunk in chunks:
+                await self._safe_send(html_lib.escape(chunk))
+        finally:
+            self._stream_msg = None
+            self._stream_buf = ""
 
     async def send_response(self, text: str, footer: str = ""):
         """Send the final model response (with footer). Auto-splits long messages.

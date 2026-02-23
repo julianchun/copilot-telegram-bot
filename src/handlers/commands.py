@@ -611,3 +611,21 @@ async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Commits:\n{log}"
     )
     await chat_handler(update, context, override_text=prompt)
+
+
+async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle live streaming mode (real-time token display)."""
+    if not await security_check(update): return
+    service.streaming_enabled = not service.streaming_enabled
+    if service.streaming_enabled:
+        await update.message.reply_text(
+            "📡 Streamer Mode: ENABLED\n"
+            "Responses will stream live as tokens arrive — like watching Copilot type.\n"
+            "Takes effect immediately. Use /clear to start a fresh streaming session."
+        )
+    else:
+        await update.message.reply_text(
+            "🔇 Streamer Mode: DISABLED\n"
+            "Responses will be sent as complete messages (default behavior)."
+        )
+

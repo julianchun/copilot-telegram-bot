@@ -181,7 +181,7 @@ class SessionMixin:
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         resume_config = {
             "model": model,
-            "streaming": False,
+            "streaming": self.streaming_enabled,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
@@ -255,7 +255,7 @@ class SessionMixin:
 
         session_config = {
             "model": model,
-            "streaming": False,
+            "streaming": self.streaming_enabled,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,

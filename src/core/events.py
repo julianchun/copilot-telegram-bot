@@ -35,6 +35,7 @@ class EventHandlerMixin:
             SessionEventType.ASSISTANT_USAGE: self._on_assistant_usage,
             SessionEventType.SESSION_MODEL_CHANGE: self._on_session_model_change,
             SessionEventType.ASSISTANT_REASONING_DELTA: self._on_reasoning_delta,
+            SessionEventType.ASSISTANT_MESSAGE_DELTA: self._on_assistant_message_delta,
             SessionEventType.SESSION_COMPACTION_START: self._on_compaction_start,
             SessionEventType.SESSION_COMPACTION_COMPLETE: self._on_compaction_complete,
         }
@@ -180,6 +181,14 @@ class EventHandlerMixin:
         content = getattr(event.data, 'delta_content', None) or getattr(event.data, 'content', None)
         if content:
             logger.debug(f"🧠 Reasoning: {truncate_text(content, 200)}")
+
+    def _on_assistant_message_delta(self, event):
+        """Token-by-token streaming delta — forward to delta_callback when streaming enabled."""
+        if not self.delta_callback:
+            return
+        content = getattr(event.data, 'delta_content', None) or getattr(event.data, 'content', None)
+        if content:
+            self._dispatch_async(self.delta_callback, content)
 
     def _on_compaction_start(self, event):
         logger.info("📦 Session compaction started")

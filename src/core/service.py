@@ -66,6 +66,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._event_unsubscribe: Optional[Callable] = None
         self._usage_unsubscribe: Optional[Callable] = None
         self.current_callback: Optional[Callable] = None
+        self.delta_callback: Optional[Callable] = None
         self.interaction_callback: Optional[Callable] = None
         self.completion_callback: Optional[Callable] = None
         self.last_assistant_usage: Any = None
@@ -83,6 +84,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self.session_end_callback: Optional[Callable[[str], Any]] = None
         self.allow_all_tools: bool = False
         self.infinite_sessions_enabled: bool = False
+        self.streaming_enabled: bool = False
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
@@ -423,6 +425,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         status_callback: Optional[Callable[[str], Any]] = None,
         interaction_callback: Optional[Callable[[str, Any], Any]] = None,
         completion_callback: Optional[Callable[[], Any]] = None,
+        delta_callback: Optional[Callable[[str], Any]] = None,
         attachments: Optional[list] = None,
     ):
         """Send a message to the Copilot session and wait for completion.
@@ -432,6 +435,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
           status_callback(status) — tool events trigger permanent messages.
           interaction_callback(kind, payload) — for permission/input dialogs.
           completion_callback() — fires when the model finishes (SESSION_IDLE).
+          delta_callback(chunk) — fires for each streaming token delta (streaming mode only).
 
         Args:
           attachments — optional list of SDK attachment dicts.
@@ -441,6 +445,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             if not self.session:
                 await self.start()
             self.current_callback = content_callback
+            self.delta_callback = delta_callback
             ctx.status_callback = status_callback
             self.interaction_callback = interaction_callback
             self.completion_callback = completion_callback
@@ -455,6 +460,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                     raise asyncio.CancelledError("Request cancelled by user")
             finally:
                 self.current_callback = None
+                self.delta_callback = None
                 ctx.status_callback = None
                 self.interaction_callback = None
                 self.completion_callback = None

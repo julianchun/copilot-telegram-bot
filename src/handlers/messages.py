@@ -133,6 +133,10 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         """Accumulate response chunks (no streaming to Telegram)."""
         response_chunks.append(text_chunk)
 
+    async def stream_delta_callback(chunk: str):
+        """Forward streaming delta to MessageSender for live editing."""
+        await sender.stream_delta(chunk)
+
     async def on_completion():
         """Signal that the model has finished."""
         completion_event.set()
@@ -218,6 +222,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             status_callback=tool_log, 
             interaction_callback=interaction_callback,
             completion_callback=on_completion,
+            delta_callback=stream_delta_callback if service.streaming_enabled else None,
             attachments=attachments,
         )
         
@@ -242,9 +247,12 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         except Exception as e:
             logger.error(f"Footer generation failed: {e}")
         
-        # Send blocking response with footer
-        full_response = "".join(response_chunks)
-        await sender.send_response(full_response, footer)
+        # Finalize response — streaming edits live message, non-streaming sends new
+        if service.streaming_enabled:
+            await sender.finalize_stream(footer)
+        else:
+            full_response = "".join(response_chunks)
+            await sender.send_response(full_response, footer)
 
     except asyncio.CancelledError:
         # /cancel was invoked — just dismiss the working message silently
