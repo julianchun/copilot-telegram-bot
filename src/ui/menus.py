@@ -41,6 +41,19 @@ def get_project_keyboard(root_path: Path):
     buttons.append([InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")])
     return InlineKeyboardMarkup(buttons)
 
+def get_sessions_keyboard(sessions) -> InlineKeyboardMarkup:
+    """Build inline keyboard listing recent sessions for /sessions command."""
+    btns = []
+    for s in sessions[:10]:
+        session_id = getattr(s, 'sessionId', None) or str(s)
+        summary = (getattr(s, 'summary', None) or "No summary")[:35]
+        start_time = (getattr(s, 'startTime', None) or "")[:10]
+        label = f"{start_time} · {summary}"
+        btns.append(InlineKeyboardButton(label, callback_data=f"session:{session_id}"))
+    buttons = [[btn] for btn in btns]
+    return InlineKeyboardMarkup(buttons)
+
+
 def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
     btns = []
     for m in models_data:
@@ -60,15 +73,28 @@ def _command_reference() -> str:
         "/edit - Standard Chat/Coding mode\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
+        "/effort - Set reasoning effort level\n"
+        "/sessions - Browse & resume past sessions\n"
         "/clear - Reset conversation memory\n"
+        "/compact - Compact context (smart reset)\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
         "/usage - Display session usage metrics\n"
         "/context - Display model context info\n"
-        "/session - Show session info and workspace summary\n\n"
+        "/session - Show session info and workspace summary\n"
+        "/infinite - Toggle infinite sessions (auto-compaction)\n"
+        "/allowall - Toggle allow-all-tools mode\n\n"
+        "Code Tools\n"
+        "/diff - Show git diff\n"
+        "/review - AI code review of current diff\n"
+        "/changelog - Generate changelog from git log\n"
+        "/instructions - View Copilot instructions file\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
-        "/cwd - Show current directory\n"
+        "/cwd - Show current directory\n\n"
+        "Utilities\n"
+        "/ping - Check CLI connection status\n"
+        "/update - Update Copilot CLI\n"
     )
 
 

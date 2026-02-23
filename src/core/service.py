@@ -81,6 +81,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._tool_call_names: Dict[str, str] = {}
         self.session_expired: bool = False
         self.session_end_callback: Optional[Callable[[str], Any]] = None
+        self.allow_all_tools: bool = False
+        self.infinite_sessions_enabled: bool = False
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
