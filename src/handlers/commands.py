@@ -322,10 +322,10 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show git diff for the current project."""
+    """Show git diff for the current project (paged, non-interactive)."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.config import TELEGRAM_MSG_LIMIT
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     cwd = service.get_working_directory()
     msg = await update.message.reply_text("🔍 Running git diff...")
     try:
@@ -336,10 +336,33 @@ async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        diff = stdout.decode().strip() or stderr.decode().strip() or "No changes."
-        if len(diff) > TELEGRAM_MSG_LIMIT - 50:
-            diff = diff[:TELEGRAM_MSG_LIMIT - 50] + "\n... truncated"
-        await msg.edit_text(f"📋 Git Diff:\n{diff}")
+        diff = stdout.decode().strip() or stderr.decode().strip()
+        if not diff:
+            await msg.edit_text("ℹ️ No uncommitted changes.")
+            return
+        # Chunk at line boundaries; HTML tags expand each line by ~10 chars, so keep raw budget at 2500
+        chunks, current, current_len = [], [], 0
+        for line in diff.splitlines():
+            if current_len + len(line) + 1 > 2500 and current:
+                chunks.append('\n'.join(current))
+                current, current_len = [line], len(line)
+            else:
+                current.append(line)
+                current_len += len(line) + 1
+        if current:
+            chunks.append('\n'.join(current))
+        total = len(chunks)
+        # Offer paging choice
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"📄 1 page", callback_data="diff:1")],
+            [InlineKeyboardButton(f"📄 3 pages", callback_data="diff:3")],
+            [InlineKeyboardButton(f"📄 Full ({total} page{'s' if total != 1 else ''})", callback_data=f"diff:{total}")],
+        ])
+        context.user_data["_diff_chunks"] = chunks
+        await msg.edit_text(
+            f"📋 Diff has {total} page(s). How much to show?",
+            reply_markup=keyboard,
+        )
     except asyncio.TimeoutError:
         await msg.edit_text("⚠️ Git diff timed out.")
     except Exception as e:
@@ -439,6 +462,7 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     from src.ui.menus import get_sessions_keyboard
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     msg = await update.message.reply_text("🔄 Fetching sessions...")
     try:
         if not service._is_running:
@@ -447,8 +471,15 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sessions:
             await msg.edit_text("📋 No past sessions found.")
             return
-        keyboard = get_sessions_keyboard(sessions)
-        await msg.edit_text("📋 Select a session to resume:", reply_markup=keyboard)
+        cwd = service.get_working_directory()
+        project_name = service.project_name or Path(cwd).name
+        header, keyboard = get_sessions_keyboard(sessions, cwd_filter=cwd)
+        buttons = list(keyboard.inline_keyboard)
+        buttons.append([InlineKeyboardButton("🌐 Show all projects", callback_data="sessions_all")])
+        await msg.edit_text(
+            f"📋 Sessions for: {project_name}\n{header}",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
     except Exception as e:
         logger.error(f"sessions_command failed: {e}")
         await msg.edit_text(f"⚠️ Failed to fetch sessions: {e}")
@@ -527,13 +558,20 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("ℹ️ No uncommitted changes to review.")
         return
     await msg.delete()
+    # Leave ~40k tokens for prompt overhead + response; 1 token ≈ 4 chars
+    max_diff_chars = min(len(diff), 320_000)
+    if len(diff) > max_diff_chars:
+        truncation_note = f"\n\n⚠️ Diff truncated to {max_diff_chars:,} chars (full diff is {len(diff):,} chars)."
+    else:
+        truncation_note = ""
     prompt = (
         "Please review the following git diff. Focus on:\n"
         "- Bugs or logic errors\n"
         "- Security issues\n"
         "- Code quality and clarity\n"
         "- Any missing edge cases\n\n"
-        f"```\n{diff[:6000]}\n```"
+        f"```\n{diff[:max_diff_chars]}\n```"
+        f"{truncation_note}"
     )
     await chat_handler(update, context, override_text=prompt)
 

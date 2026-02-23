@@ -15,12 +15,15 @@ WAITING_PROJECT_NAME = 1
 
 
 async def _refresh_auth_info(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Refresh auth info in context after service is started."""
+    """Refresh auth, CLI version and SDK version in context after service is started."""
+    from src.handlers.commands import _get_system_info
     try:
-        auth = await service.get_auth_status()
+        cli_version, auth, sdk_version = await _get_system_info()
         context.user_data['auth'] = auth
+        context.user_data['cli_version'] = cli_version
+        context.user_data['sdk_version'] = sdk_version
     except Exception as e:
-        logger.debug(f"Auth refresh failed, keeping existing value: {e}")
+        logger.debug(f"Auth/version refresh failed: {e}")
 
 
 def _build_project_selected_message(context: ContextTypes.DEFAULT_TYPE, project_name: str, action: str = "Selected") -> str:
@@ -31,6 +34,23 @@ def _build_project_selected_message(context: ContextTypes.DEFAULT_TYPE, project_
     auth = context.user_data.get('auth', 'Unknown')
     cli_version = context.user_data.get('cli_version', 'Unknown')
     sdk_version = context.user_data.get('sdk_version', 'Unknown')
+    return (
+        f"🚀 Copilot CLI-Telegram\n"
+        f"User: {auth}\n"
+        f"CLI version: {cli_version}\n"
+        f"SDK version: {sdk_version}\n"
+        f"✅ {action}: {project_name}"
+    )
+
+
+async def _build_project_selected_message_live(context: ContextTypes.DEFAULT_TYPE, project_name: str, action: str = "Selected") -> str:
+    """Like _build_project_selected_message but re-fetches versions live (service is running)."""
+    from src.handlers.commands import _get_system_info
+    cli_version, auth, sdk_version = await _get_system_info()
+    # Update cache so subsequent reads are consistent
+    context.user_data['cli_version'] = cli_version
+    context.user_data['auth'] = auth
+    context.user_data['sdk_version'] = sdk_version
     return (
         f"🚀 Copilot CLI-Telegram\n"
         f"User: {auth}\n"
@@ -117,6 +137,58 @@ async def _handle_interaction_callback(query, update, context):
         await query.edit_message_text("⚠️ Interaction expired or already handled.")
 
 
+def _format_diff_html(raw_chunk: str) -> str:
+    """Format a raw diff chunk with visual markup for Telegram HTML mode.
+
+    Telegram has no color support, so we use:
+      bold        → added lines (+)
+      strikethrough → removed lines (-)
+      italic      → hunk headers (@@)
+      <code>      → file headers and context lines
+    """
+    import html as html_lib
+    lines = []
+    for line in raw_chunk.splitlines():
+        e = html_lib.escape(line)
+        if line.startswith('+') and not line.startswith('+++'):
+            lines.append(f'<b>{e}</b>')
+        elif line.startswith('-') and not line.startswith('---'):
+            lines.append(f'<s>{e}</s>')
+        elif line.startswith('@@'):
+            lines.append(f'<i>{e}</i>')
+        else:
+            lines.append(f'<code>{e}</code>')
+    return '\n'.join(lines)
+
+
+async def _handle_diff_callback(query, context):
+    """Handle diff: callback — send paged git diff with visual markup."""
+    try:
+        max_msgs = int(query.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await query.edit_message_text("⚠️ Invalid diff request. Run /diff again.")
+        return
+    chunks = context.user_data.get("_diff_chunks")
+    if not chunks:
+        await query.edit_message_text("⚠️ Diff data expired. Run /diff again.")
+        return
+    await query.delete_message()
+    to_send = chunks[:max_msgs]
+    remainder = len(chunks) - len(to_send)
+    for i, chunk in enumerate(to_send):
+        header = f"📋 Git Diff (page {i+1}/{len(to_send)}):\n" if len(to_send) > 1 else "📋 Git Diff:\n"
+        text = header + _format_diff_html(chunk)
+        if i == 0:
+            await query.message.reply_text(text, parse_mode="HTML")
+        else:
+            await query.message.chat.send_message(text, parse_mode="HTML")
+    if remainder > 0:
+        await query.message.chat.send_message(
+            f"ℹ️ {remainder} more page(s) not shown. Run /diff again to see more."
+        )
+    context.user_data.pop("_diff_chunks", None)
+
+
 async def _handle_ls_callback(query, context):
     """Handle ls: callback — render file tree at chosen depth."""
     from src.core.filesystem import get_directory_listing, get_project_structure
@@ -187,14 +259,42 @@ async def _handle_reasoning_callback(query, context):
 
 async def _handle_session_callback(query, context):
     """Handle session: callback queries — resume a past session by ID."""
+    from src.ui.menus import _clean_summary
     session_id = query.data.split(":", 1)[1]
-    msg = await query.message.reply_text(f"🔄 Resuming session {session_id[:8]}...")
+    if session_id == "none":
+        await query.answer("No sessions found for this project.", show_alert=True)
+        return
+    # Find the session object to get its summary before resuming
+    session_obj = None
+    try:
+        sessions = await service.client.list_sessions()
+        session_obj = next((s for s in sessions if getattr(s, 'sessionId', None) == session_id), None)
+    except Exception:
+        pass
+    msg = await query.message.reply_text(f"🔄 Resuming session {session_id[-8:]}...")
     try:
         await service.resume_session_by_id(session_id)
-        await msg.edit_text(f"✅ Session resumed: {session_id[:8]}\nConversation history restored.")
+        summary = _clean_summary(getattr(session_obj, 'summary', None)) if session_obj else None
+        if summary:
+            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}\n\n📝 Summary:\n{summary}")
+        else:
+            await msg.edit_text(f"✅ Session resumed: {session_id[-8:]}\n_(No summary available)_")
     except Exception as e:
         logger.error(f"Session resume failed: {e}")
         await msg.edit_text(f"⚠️ Failed to resume session: {e}")
+
+
+async def _handle_sessions_all_callback(query, context):
+    """Show sessions from all projects (no CWD filter)."""
+    from src.ui.menus import get_sessions_keyboard
+    await query.edit_message_text("🔄 Fetching all sessions...")
+    try:
+        sessions = await service.client.list_sessions()
+        header, keyboard = get_sessions_keyboard(sessions, cwd_filter=None)
+        await query.edit_message_text(f"📋 {header}", reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"sessions_all failed: {e}")
+        await query.edit_message_text(f"⚠️ Failed: {e}")
 
 
 async def _handle_project_callback(query, context):
@@ -244,8 +344,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("perm:") or data.startswith("input:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("diff:"):
+            await _handle_diff_callback(query, context)
         elif data.startswith("ls:"):
             await _handle_ls_callback(query, context)
+        elif data == "sessions_all":
+            await _handle_sessions_all_callback(query, context)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):

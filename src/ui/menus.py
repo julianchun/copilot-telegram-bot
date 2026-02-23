@@ -1,7 +1,22 @@
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import WORKSPACE_PATH, GRANTED_PROJECT_PATHS
+
+
+def _read_session_cwd(session_id: str) -> Optional[str]:
+    """Read the cwd from ~/.copilot/session-state/<id>/workspace.yaml without PyYAML."""
+    if not session_id:
+        return None
+    workspace = Path.home() / ".copilot" / "session-state" / session_id / "workspace.yaml"
+    try:
+        for line in workspace.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("cwd:"):
+                return stripped[4:].strip() or None
+    except Exception:
+        pass
+    return None
 
 
 def _build_button_grid(items: List[InlineKeyboardButton], columns: int = 2) -> List[List[InlineKeyboardButton]]:
@@ -60,22 +75,74 @@ def _clean_summary(raw: str | None) -> str:
     return stripped[:38]
 
 
-def get_sessions_keyboard(sessions) -> InlineKeyboardMarkup:
-    """Build inline keyboard listing recent sessions for /sessions command."""
-    # Sort newest first
+_PROJECT_ICONS = ["🔵", "🟢", "🟡", "🟠", "🔴", "🟣", "🟤", "⚪", "🔶", "🔷"]
+
+
+def get_sessions_keyboard(sessions, cwd_filter: Optional[str] = None):
+    """Build inline keyboard listing recent sessions for /sessions command.
+
+    Returns (header_text, InlineKeyboardMarkup).
+
+    If cwd_filter is provided, only sessions whose workspace.yaml cwd matches are shown.
+    If cwd_filter is None, sessions from all projects are shown; each project gets a unique
+    icon that appears both in the header legend and as a prefix on each session button.
+    """
     sorted_sessions = sorted(
         sessions, key=lambda s: getattr(s, 'modifiedTime', '') or '', reverse=True
     )
-    btns = []
-    for s in sorted_sessions[:10]:
-        session_id = getattr(s, 'sessionId', None) or str(s)
+
+    def _make_btn(s, session_id, icon=""):
         summary = _clean_summary(getattr(s, 'summary', None))
-        start_time = (getattr(s, 'startTime', None) or "")[:10]
+        start_time = getattr(s, 'startTime', None) or ""
+        date_str = start_time[:10]
+        time_str = start_time[11:16] if len(start_time) >= 16 else ""
         short_id = session_id[-8:] if len(session_id) > 8 else session_id
-        label = f"{start_time} [{short_id}]  {summary}"
-        btns.append(InlineKeyboardButton(label, callback_data=f"session:{session_id}"))
-    buttons = [[btn] for btn in btns]
-    return InlineKeyboardMarkup(buttons)
+        prefix = f"{icon} " if icon else ""
+        label = f"{prefix}{date_str} {time_str} [{short_id}]  {summary}"
+        return InlineKeyboardButton(label, callback_data=f"session:{session_id}")
+
+    if cwd_filter:
+        # Single-project view: flat list filtered by CWD
+        btns = []
+        for s in sorted_sessions:
+            if len(btns) >= 10:
+                break
+            session_id = getattr(s, 'sessionId', None) or str(s)
+            if _read_session_cwd(session_id) != cwd_filter:
+                continue
+            btns.append(_make_btn(s, session_id))
+        if not btns:
+            btns.append(InlineKeyboardButton("No sessions for this project", callback_data="session:none"))
+        return "Select a session to resume:", InlineKeyboardMarkup([[btn] for btn in btns])
+    else:
+        # All-projects view: assign icon per project, list legend in header
+        from collections import defaultdict, OrderedDict
+        groups: dict = OrderedDict()
+        for s in sorted_sessions:
+            session_id = getattr(s, 'sessionId', None) or str(s)
+            cwd = _read_session_cwd(session_id)
+            project = Path(cwd).name if cwd else "Unknown"
+            if project not in groups:
+                groups[project] = []
+            groups[project].append((s, session_id))
+
+        # Assign icons
+        icon_map = {p: _PROJECT_ICONS[i % len(_PROJECT_ICONS)] for i, p in enumerate(groups)}
+
+        # Build header legend
+        legend = "\n".join(f"{icon_map[p]} {p}" for p in groups)
+        header = f"All sessions by project:\n{legend}\n\nSelect to resume:"
+
+        # Build buttons with icon prefix, up to 5 per project
+        rows = []
+        for project, items in groups.items():
+            icon = icon_map[project]
+            for s, session_id in items[:5]:
+                rows.append([_make_btn(s, session_id, icon=icon)])
+
+        if not rows:
+            rows.append([InlineKeyboardButton("No sessions found", callback_data="session:none")])
+        return header, InlineKeyboardMarkup(rows)
 
 
 def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
