@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -297,3 +298,249 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)
+
+
+# ── New commands ──────────────────────────────────────────────────────────
+
+
+async def diff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show git diff for the current project."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.config import TELEGRAM_MSG_LIMIT
+    cwd = service.get_working_directory()
+    msg = await update.message.reply_text("🔍 Running git diff...")
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "git diff HEAD",
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+        diff = stdout.decode().strip() or stderr.decode().strip() or "No changes."
+        if len(diff) > TELEGRAM_MSG_LIMIT - 50:
+            diff = diff[:TELEGRAM_MSG_LIMIT - 50] + "\n... truncated"
+        await msg.edit_text(f"📋 Git Diff:\n{diff}")
+    except asyncio.TimeoutError:
+        await msg.edit_text("⚠️ Git diff timed out.")
+    except Exception as e:
+        logger.error(f"diff_command failed: {e}")
+        await msg.edit_text(f"⚠️ Error: {e}")
+
+
+async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View the Copilot instructions file for the current project."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.config import TELEGRAM_MSG_LIMIT
+    cwd = service.get_working_directory()
+    instructions_path = Path(cwd) / ".github" / "copilot-instructions.md"
+    if instructions_path.exists():
+        content = instructions_path.read_text()
+        if len(content) > TELEGRAM_MSG_LIMIT - 50:
+            content = content[:TELEGRAM_MSG_LIMIT - 50] + "\n... truncated"
+        await update.message.reply_text(f"📋 Copilot Instructions:\n\n{content}")
+    else:
+        await update.message.reply_text(
+            f"⚠️ No instructions file found.\nExpected: {instructions_path}\n\n"
+            "Run `copilot init` in the terminal to create one."
+        )
+
+
+async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Update the Copilot CLI to the latest version."""
+    if not await security_check(update): return
+    import shutil
+    cli = shutil.which("copilot")
+    if not cli:
+        await update.message.reply_text("⚠️ Copilot CLI not found in PATH.")
+        return
+    msg = await update.message.reply_text("🔄 Updating Copilot CLI...")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            cli, "update",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        output = (stdout + stderr).decode().strip() or "Update complete."
+        await msg.edit_text(f"✅ {output}"[:4000])
+    except asyncio.TimeoutError:
+        await msg.edit_text("⚠️ Update timed out (60s).")
+    except Exception as e:
+        logger.error(f"update_command failed: {e}")
+        await msg.edit_text(f"⚠️ Update failed: {e}")
+
+
+async def allow_all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle allow-all-tools mode (skip per-request permission prompts)."""
+    if not await security_check(update): return
+    service.allow_all_tools = not service.allow_all_tools
+    if service.allow_all_tools:
+        await update.message.reply_text(
+            "✅ Allow All Tools: ENABLED\n"
+            "All tool permissions are auto-approved. Use /allowall again to restore prompts."
+        )
+    else:
+        await update.message.reply_text(
+            "🔒 Allow All Tools: DISABLED\n"
+            "Per-request permission prompts restored."
+        )
+
+
+async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set reasoning effort level for models that support it."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    model_id = service.user_selected_model or service.current_model
+    if not model_id:
+        await update.message.reply_text("⚠️ No model selected. Use /model first.")
+        return
+    model_info = next((m for m in service._models_cache if m["id"] == model_id), None)
+    if not model_info or not model_info.get("supports_reasoning"):
+        await update.message.reply_text(
+            f"⚠️ Model '{model_id}' does not support reasoning effort.\n"
+            "Switch to a Claude model with /model."
+        )
+        return
+    from src.ui.menus import get_reasoning_keyboard
+    current = service.current_reasoning_effort or model_info.get("default_effort") or "default"
+    keyboard = get_reasoning_keyboard(model_id, model_info["supported_efforts"], model_info.get("default_effort"))
+    await update.message.reply_text(
+        f"🧠 Reasoning Effort — {model_id}\nCurrent: {current}\n\nSelect effort level:",
+        reply_markup=keyboard,
+    )
+
+
+async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Browse and resume past Copilot sessions."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.ui.menus import get_sessions_keyboard
+    msg = await update.message.reply_text("🔄 Fetching sessions...")
+    try:
+        sessions = await service.client.list_sessions()
+        if not sessions:
+            await msg.edit_text("📋 No past sessions found.")
+            return
+        keyboard = get_sessions_keyboard(sessions)
+        await msg.edit_text("📋 Select a session to resume:", reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"sessions_command failed: {e}")
+        await msg.edit_text(f"⚠️ Failed to fetch sessions: {e}")
+
+
+async def infinite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle infinite sessions (automatic context compaction)."""
+    if not await security_check(update): return
+    service.infinite_sessions_enabled = not service.infinite_sessions_enabled
+    if service.infinite_sessions_enabled:
+        await update.message.reply_text(
+            "♾️ Infinite Sessions: ENABLED\n"
+            "Context auto-compaction is on. Takes effect on next /clear or session reset."
+        )
+    else:
+        await update.message.reply_text(
+            "🔒 Infinite Sessions: DISABLED\n"
+            "Manual context management restored."
+        )
+
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check Copilot CLI connection and auth status."""
+    if not await security_check(update): return
+    if not service._is_running:
+        await update.message.reply_text("🔴 Copilot CLI is not running. Select a project first.")
+        return
+    msg = await update.message.reply_text("🔄 Pinging...")
+    try:
+        state = service.client.get_state()
+        ping = await service.client.ping()
+        auth = await service.client.get_auth_status()
+        login = auth.login or "unknown"
+        authenticated = "✅" if auth.isAuthenticated else "❌"
+        await msg.edit_text(
+            f"🟢 Copilot CLI Status\n"
+            f"• Connection: {state}\n"
+            f"• Protocol: v{ping.protocolVersion}\n"
+            f"• Auth: {authenticated} {login}\n"
+            f"• Host: {auth.host or 'github.com'}"
+        )
+    except Exception as e:
+        logger.error(f"ping_command failed: {e}")
+        await msg.edit_text(f"🔴 Ping failed: {e}")
+
+
+async def compact_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Compact context: resets session. Enable /infinite for auto-compaction."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    context.user_data['plan_mode'] = False
+    await service.reset_session()
+    tip = "" if service.infinite_sessions_enabled else "\nTip: Use /infinite to enable automatic context compaction."
+    await update.message.reply_text(f"🗜️ Context compacted — session reset.{tip}")
+
+
+async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Run an AI code review on the current git diff."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    cwd = service.get_working_directory()
+    msg = await update.message.reply_text("🔍 Fetching diff for review...")
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "git diff HEAD",
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        diff = stdout.decode().strip()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Failed to get diff: {e}")
+        return
+    if not diff:
+        await msg.edit_text("ℹ️ No uncommitted changes to review.")
+        return
+    await msg.delete()
+    prompt = (
+        "Please review the following git diff. Focus on:\n"
+        "- Bugs or logic errors\n"
+        "- Security issues\n"
+        "- Code quality and clarity\n"
+        "- Any missing edge cases\n\n"
+        f"```\n{diff[:6000]}\n```"
+    )
+    await chat_handler(update, context, override_text=prompt)
+
+
+async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate a changelog entry from recent git commits."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    cwd = service.get_working_directory()
+    msg = await update.message.reply_text("🔍 Reading git log...")
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "git log --oneline -30",
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        log = stdout.decode().strip()
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Failed to get git log: {e}")
+        return
+    if not log:
+        await msg.edit_text("ℹ️ No commits found.")
+        return
+    await msg.delete()
+    prompt = (
+        "Generate a concise, well-formatted changelog entry based on these recent commits. "
+        "Group changes by type (Features, Bug Fixes, Improvements). "
+        "Use plain text bullet points.\n\n"
+        f"Commits:\n{log}"
+    )
+    await chat_handler(update, context, override_text=prompt)
