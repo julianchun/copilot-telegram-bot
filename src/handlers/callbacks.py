@@ -121,17 +121,34 @@ async def _handle_ls_callback(query, context):
     """Handle ls: callback — render file tree at chosen depth."""
     from src.core.filesystem import get_directory_listing, get_project_structure
     from src.handlers.commands import _send_paged
-    depth = int(query.data.split(":")[1])
-    await query.edit_message_text("🔍 Building tree...")
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    parts = query.data.split(":")
+    depth = int(parts[1])
+    max_msgs = int(parts[2]) if len(parts) > 2 else None
+
+    # Full tree: ask for max messages first
+    if depth == 2 and max_msgs is None:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("1 message\n(compact)", callback_data="ls:2:1")],
+            [InlineKeyboardButton("3 messages\n(standard)", callback_data="ls:2:3")],
+            [InlineKeyboardButton("5 messages\n(detailed)", callback_data="ls:2:5")],
+        ])
+        await query.edit_message_text("How much of the tree to show?", reply_markup=keyboard)
+        return
+
+    if max_msgs is None:
+        max_msgs = 1
+
+    await query.edit_message_text("Building tree...")
     if depth == 0:
         text = get_directory_listing(service.get_working_directory())
-        header = "📂 Top-level:\n"
+        header = "Top-level:\n"
     else:
         text = get_project_structure(service.get_working_directory(), max_depth=depth)
-        label = "Shallow (depth 1)" if depth == 1 else "Full tree (depth 2)"
-        header = f"📂 {label}:\n"
+        header = "Shallow (1 level):\n" if depth == 1 else "Full tree (2 levels):\n"
     await query.delete_message()
-    await _send_paged(query.message, text, header)
+    await _send_paged(query.message, text, header, max_msgs=max_msgs)
 
 
 async def _handle_model_callback(query, context):

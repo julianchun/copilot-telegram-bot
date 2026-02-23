@@ -146,11 +146,17 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cwd = service.get_working_directory()
     await update.message.reply_text(f"📂 Current working directory:\n{cwd}")
 
-async def _send_paged(message, text: str, header: str = ""):
-    """Send text across multiple messages if it exceeds Telegram's limit."""
+async def _send_paged(message, text: str, header: str = "", max_msgs: int = 5):
+    """Send text across multiple messages, capped at max_msgs."""
     from src.config import TELEGRAM_MSG_LIMIT
     chunk_size = TELEGRAM_MSG_LIMIT - 20
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    if len(chunks) > max_msgs:
+        # Truncate to fit within max_msgs, note what was cut
+        keep = chunk_size * max_msgs
+        text = text[:keep]
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        chunks[-1] += f"\n\n... truncated (showing {max_msgs} of {len(chunks)} pages)"
     for idx, chunk in enumerate(chunks):
         prefix = header if idx == 0 else f"(cont. {idx + 1}/{len(chunks)})\n"
         await message.reply_text(prefix + chunk)
@@ -160,12 +166,12 @@ async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📋 Top-level only", callback_data="ls:0"),
-        InlineKeyboardButton("🌿 Shallow (depth 1)", callback_data="ls:1"),
-        InlineKeyboardButton("🌳 Full tree (depth 2)", callback_data="ls:2"),
-    ]])
-    await update.message.reply_text("📂 File tree — choose view:", reply_markup=keyboard)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Top-level only\n(no subfolders)", callback_data="ls:0:1")],
+        [InlineKeyboardButton("Shallow\n(1 level deep)", callback_data="ls:1:1")],
+        [InlineKeyboardButton("Full tree\n(2 levels deep)", callback_data="ls:2")],
+    ])
+    await update.message.reply_text("Choose file tree view:", reply_markup=keyboard)
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
