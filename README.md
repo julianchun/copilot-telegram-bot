@@ -140,14 +140,25 @@ After selecting a project, a **cockpit message** appears with:
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
+| `/effort` | Set reasoning effort directly (low / medium / high). |
 | `/context` | Display model context and token usage info. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/session` | Show session info and workspace summary. |
+| `/sessions` | Browse past Copilot sessions (filtered by project) and resume one. |
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
 | `/clear` | Reset conversation memory. |
-| `/ls` | List files in current directory. |
+| `/compact` | Compact context and reset session. |
+| `/infinite` | Toggle infinite sessions (automatic context compaction). |
+| `/ls` | List files in current directory with depth picker and paged output. |
 | `/cwd` | Show current working directory. |
+| `/diff` | Show git diff for the current project (paged, color-coded). |
+| `/review` | Run an AI code review on the current git diff. |
+| `/changelog` | Generate a changelog entry from recent git commits. |
+| `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
+| `/ping` | Check CLI connectivity and measure latency. |
+| `/allowall` | Bypass tool permission prompts (allow all tools automatically). |
+| `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood
 This bot is built on top of the **`github-copilot-sdk`**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
@@ -205,7 +216,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
 - **[src/handlers/](src/handlers/)** — Telegram Handlers:
-  - **[commands.py](src/handlers/commands.py)**: All 13 bot commands (`/start`, `/help`, `/plan`, `/model`, `/cancel`, etc.).
+  - **[commands.py](src/handlers/commands.py)**: All 24 bot commands (`/start`, `/help`, `/plan`, `/model`, `/diff`, `/review`, `/sessions`, etc.).
   - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
