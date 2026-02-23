@@ -1,4 +1,5 @@
 import asyncio
+import html as html_lib
 import logging
 from telegram import Message, Chat
 from telegram.constants import ParseMode
@@ -161,7 +162,10 @@ class MessageSender:
                 pass
             elif "Can't parse entities" in str(e):
                 try:
-                    await asyncio.wait_for(message.edit_text(text), timeout=10.0)
+                    await asyncio.wait_for(
+                        message.edit_text(html_lib.escape(text), parse_mode=ParseMode.HTML),
+                        timeout=10.0,
+                    )
                 except Exception:
                     logger.warning("Failed to edit message even as plain text")
             else:
@@ -190,7 +194,10 @@ class MessageSender:
         except BadRequest as e:
             if "Can't parse entities" in str(e):
                 try:
-                    return await asyncio.wait_for(self.chat.send_message(text), timeout=10.0)
+                    return await asyncio.wait_for(
+                        self.chat.send_message(html_lib.escape(text), parse_mode=ParseMode.HTML),
+                        timeout=10.0,
+                    )
                 except Exception:
                     logger.warning("Failed to send message even as plain text")
             else:
