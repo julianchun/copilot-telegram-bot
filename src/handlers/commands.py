@@ -146,16 +146,26 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cwd = service.get_working_directory()
     await update.message.reply_text(f"📂 Current working directory:\n{cwd}")
 
+async def _send_paged(message, text: str, header: str = ""):
+    """Send text across multiple messages if it exceeds Telegram's limit."""
+    from src.config import TELEGRAM_MSG_LIMIT
+    chunk_size = TELEGRAM_MSG_LIMIT - 20
+    chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    for idx, chunk in enumerate(chunks):
+        prefix = header if idx == 0 else f"(cont. {idx + 1}/{len(chunks)})\n"
+        await message.reply_text(prefix + chunk)
+
+
 async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.config import TELEGRAM_MSG_LIMIT
-    tree = service.get_project_structure()
-    text = tree
-    if len(text) > TELEGRAM_MSG_LIMIT:
-        avail = TELEGRAM_MSG_LIMIT - len("\n... truncated")
-        text = tree[:avail] + "\n... truncated"
-    await update.message.reply_text(text)
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Top-level only", callback_data="ls:0"),
+        InlineKeyboardButton("🌿 Shallow (depth 1)", callback_data="ls:1"),
+        InlineKeyboardButton("🌳 Full tree (depth 2)", callback_data="ls:2"),
+    ]])
+    await update.message.reply_text("📂 File tree — choose view:", reply_markup=keyboard)
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
