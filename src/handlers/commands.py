@@ -147,19 +147,21 @@ async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📂 Current working directory:\n{cwd}")
 
 async def _send_paged(message, text: str, header: str = "", max_msgs: int = 5):
-    """Send text across multiple messages, capped at max_msgs."""
+    """Send text across multiple messages, capped at max_msgs, in preformatted blocks."""
     from src.config import TELEGRAM_MSG_LIMIT
-    chunk_size = TELEGRAM_MSG_LIMIT - 20
+    import html as html_lib
+    chunk_size = TELEGRAM_MSG_LIMIT - 50  # leave room for <pre> tags and header
     chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
     if len(chunks) > max_msgs:
-        # Truncate to fit within max_msgs, note what was cut
         keep = chunk_size * max_msgs
         text = text[:keep]
         chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
-        chunks[-1] += f"\n\n... truncated (showing {max_msgs} of {len(chunks)} pages)"
+        chunks[-1] += f"\n... truncated (showing {max_msgs}/{len(chunks)} pages)"
+    total = len(chunks)
     for idx, chunk in enumerate(chunks):
-        prefix = header if idx == 0 else f"(cont. {idx + 1}/{len(chunks)})\n"
-        await message.reply_text(prefix + chunk)
+        prefix = header if idx == 0 else f"(cont. {idx + 1}/{total})\n"
+        safe = html_lib.escape(chunk)
+        await message.reply_text(f"{prefix}<pre>{safe}</pre>", parse_mode="HTML")
 
 
 async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,9 +169,9 @@ async def ls_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_project_selected(update): return
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Top-level only\n(no subfolders)", callback_data="ls:0:1")],
-        [InlineKeyboardButton("Shallow\n(1 level deep)", callback_data="ls:1:1")],
-        [InlineKeyboardButton("Full tree\n(2 levels deep)", callback_data="ls:2")],
+        [InlineKeyboardButton("📋 Top-level only\n(no subfolders)", callback_data="ls:0:1")],
+        [InlineKeyboardButton("🌿 Shallow\n(1 level deep)", callback_data="ls:1:1")],
+        [InlineKeyboardButton("🌳 Full tree\n(2 levels deep)", callback_data="ls:2")],
     ])
     await update.message.reply_text("Choose file tree view:", reply_markup=keyboard)
 
