@@ -41,14 +41,38 @@ def get_project_keyboard(root_path: Path):
     buttons.append([InlineKeyboardButton("➕ Create New Project", callback_data="proj_new")])
     return InlineKeyboardMarkup(buttons)
 
+_NOISE_PREFIXES = (
+    "You are in GENERAL Mode",
+    "You are in PLAN MODE",
+    "You are assisting via a Telegram bot",
+    "Please review the following git diff",
+    "Generate a concise",
+)
+
+def _clean_summary(raw: str | None) -> str:
+    """Return a display-friendly session summary, stripping system prompt noise."""
+    if not raw:
+        return "No summary"
+    stripped = raw.strip()
+    for prefix in _NOISE_PREFIXES:
+        if stripped.startswith(prefix):
+            return "—"
+    return stripped[:38]
+
+
 def get_sessions_keyboard(sessions) -> InlineKeyboardMarkup:
     """Build inline keyboard listing recent sessions for /sessions command."""
+    # Sort newest first
+    sorted_sessions = sorted(
+        sessions, key=lambda s: getattr(s, 'modifiedTime', '') or '', reverse=True
+    )
     btns = []
-    for s in sessions[:10]:
+    for s in sorted_sessions[:10]:
         session_id = getattr(s, 'sessionId', None) or str(s)
-        summary = (getattr(s, 'summary', None) or "No summary")[:35]
+        summary = _clean_summary(getattr(s, 'summary', None))
         start_time = (getattr(s, 'startTime', None) or "")[:10]
-        label = f"{start_time} · {summary}"
+        short_id = session_id[-8:] if len(session_id) > 8 else session_id
+        label = f"{start_time} [{short_id}]  {summary}"
         btns.append(InlineKeyboardButton(label, callback_data=f"session:{session_id}"))
     buttons = [[btn] for btn in btns]
     return InlineKeyboardMarkup(buttons)
