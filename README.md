@@ -158,7 +158,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/instructions` | View the `.github/copilot-instructions.md` file for the current project. |
 | `/ping` | Check CLI connectivity and measure latency. |
 | `/allowall` | Bypass tool permission prompts (allow all tools automatically). |
-| `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. |
+| `/streamer_mode` | Toggle live token streaming — responses appear token-by-token in real time. Long responses auto-paginate. |
 | `/update` | Update the Copilot CLI binary. |
 
 ## 🔧 Under the Hood
@@ -222,7 +222,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
 - **[src/ui/](src/ui/)** — Output & Formatting:
-  - **[streamer.py](src/ui/streamer.py)**: `MessageSender` — sends tool events as permanent messages, final response with footer. Auto-splits at 4000 chars, handles code block safety, retry on rate limits.
+  - **[streamer.py](src/ui/streamer.py)**: `MessageSender` — sends tool events as permanent messages, final response with footer. Auto-splits at 4000 chars, handles code block safety, retry on rate limits. Also drives `/streamer_mode` live-edit streaming with a rolling 3800-char preview window and proper multi-page finalization.
   - **[formatters.py](src/ui/formatters.py)**: Specialized tool display (bash, edit, create, grep, view, report_intent, task, update_todo) with heredoc truncation.
   - **[menus.py](src/ui/menus.py)**: Menu text generation, inline keyboard layouts, cockpit display.
   - **[session_exporter.py](src/ui/session_exporter.py)**: Exports full sessions to formatted Markdown files.
