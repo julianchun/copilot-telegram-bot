@@ -616,16 +616,23 @@ async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def streamer_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle live streaming mode (real-time token display)."""
     if not await security_check(update): return
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     service.streaming_enabled = not service.streaming_enabled
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔄 Reset session now", callback_data="streamer:reset")
+    ]])
     if service.streaming_enabled:
         await update.message.reply_text(
             "📡 Streamer Mode: ENABLED\n"
-            "Responses will stream live as tokens arrive — like watching Copilot type.\n"
-            "Takes effect immediately. Use /clear to start a fresh streaming session."
+            "Responses will stream live as tokens arrive.\n"
+            "A session reset is required for streaming to take effect.",
+            reply_markup=keyboard,
         )
     else:
         await update.message.reply_text(
             "🔇 Streamer Mode: DISABLED\n"
-            "Responses will be sent as complete messages (default behavior)."
+            "Responses will be sent as complete messages (default behavior).\n"
+            "A session reset is required for the change to take effect.",
+            reply_markup=keyboard,
         )
 

@@ -326,6 +326,15 @@ async def _handle_granted_project_callback(query, context):
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
 
+async def _handle_streamer_reset_callback(query, context):
+    """Reset session when user taps the 'Reset session now' button in /streamer_mode."""
+    context.user_data['plan_mode'] = False
+    await service.reset_session()
+    state = "ENABLED 📡" if service.streaming_enabled else "DISABLED 🔇"
+    await query.edit_message_reply_markup(reply_markup=None)
+    await query.message.reply_text(f"✅ Session reset — Streamer Mode is now {state}.")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -346,6 +355,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         elif data.startswith("diff:"):
             await _handle_diff_callback(query, context)
+        elif data == "streamer:reset":
+            await _handle_streamer_reset_callback(query, context)
         elif data.startswith("ls:"):
             await _handle_ls_callback(query, context)
         elif data == "sessions_all":
