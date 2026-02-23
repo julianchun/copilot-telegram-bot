@@ -117,6 +117,23 @@ async def _handle_interaction_callback(query, update, context):
         await query.edit_message_text("⚠️ Interaction expired or already handled.")
 
 
+async def _handle_ls_callback(query, context):
+    """Handle ls: callback — render file tree at chosen depth."""
+    from src.core.filesystem import get_directory_listing, get_project_structure
+    from src.handlers.commands import _send_paged
+    depth = int(query.data.split(":")[1])
+    await query.edit_message_text("🔍 Building tree...")
+    if depth == 0:
+        text = get_directory_listing(service.get_working_directory())
+        header = "📂 Top-level:\n"
+    else:
+        text = get_project_structure(service.get_working_directory(), max_depth=depth)
+        label = "Shallow (depth 1)" if depth == 1 else "Full tree (depth 2)"
+        header = f"📂 {label}:\n"
+    await query.delete_message()
+    await _send_paged(query.message, text, header)
+
+
 async def _handle_model_callback(query, context):
     """Handle model: callback queries."""
     model = query.data.split(":")[1]
@@ -210,6 +227,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("perm:") or data.startswith("input:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("ls:"):
+            await _handle_ls_callback(query, context)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):
