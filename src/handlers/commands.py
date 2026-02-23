@@ -397,11 +397,14 @@ async def effort_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not model_id:
         await update.message.reply_text("⚠️ No model selected. Use /model first.")
         return
+    # Populate cache if empty (e.g. first use before /model was called)
+    if not service._models_cache:
+        await service.get_available_models()
     model_info = next((m for m in service._models_cache if m["id"] == model_id), None)
     if not model_info or not model_info.get("supports_reasoning"):
         await update.message.reply_text(
             f"⚠️ Model '{model_id}' does not support reasoning effort.\n"
-            "Switch to a Claude model with /model."
+            "Switch to a reasoning-capable model with /model."
         )
         return
     from src.ui.menus import get_reasoning_keyboard
@@ -420,6 +423,8 @@ async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from src.ui.menus import get_sessions_keyboard
     msg = await update.message.reply_text("🔄 Fetching sessions...")
     try:
+        if not service._is_running:
+            await service.start()
         sessions = await service.client.list_sessions()
         if not sessions:
             await msg.edit_text("📋 No past sessions found.")
