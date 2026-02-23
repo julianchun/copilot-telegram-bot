@@ -55,8 +55,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
         if GITHUB_TOKEN:
             config["github_token"] = GITHUB_TOKEN
-        system_cli = shutil.which("copilot")
-        if system_cli:
+        system_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+        if os.path.isfile(system_cli):
             config["cli_path"] = system_cli
             logger.info(f"🔧 Using system Copilot CLI: {system_cli}")
         self.client = CopilotClient(config)
@@ -131,8 +131,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             config: Dict[str, Any] = {"cwd": str(p)}
             if GITHUB_TOKEN:
                 config["github_token"] = GITHUB_TOKEN
-            system_cli = shutil.which("copilot")
-            if system_cli:
+            system_cli = shutil.which("copilot") or os.path.expanduser("~/.local/bin/copilot")
+            if os.path.isfile(system_cli):
                 config["cli_path"] = system_cli
             self.client = CopilotClient(config)
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
@@ -257,19 +257,24 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         except Exception as e:
             logger.debug(f"SDK get_status() failed: {e}")
 
-        # Shell fallback
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                "copilot --version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            match = re.search(r"(\d+\.\d+\.\d+)", stdout.decode())
-            if match:
-                return match.group(1)
-        except Exception:
-            pass
+        # Shell fallback — try explicit path first, then bare command
+        cli_path = (
+            shutil.which("copilot")
+            or os.path.expanduser("~/.local/bin/copilot")
+        )
+        for cmd in [f'"{cli_path}" --version', "copilot --version"]:
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await proc.communicate()
+                match = re.search(r"(\d+\.\d+\.\d+)", stdout.decode())
+                if match:
+                    return match.group(1)
+            except Exception:
+                continue
         return "unknown"
 
     async def get_auth_status(self) -> str:
