@@ -55,6 +55,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
         if GITHUB_TOKEN:
             config["github_token"] = GITHUB_TOKEN
+        system_cli = shutil.which("copilot")
+        if system_cli:
+            config["cli_path"] = system_cli
+            logger.info(f"🔧 Using system Copilot CLI: {system_cli}")
         self.client = CopilotClient(config)
 
         self.session = None  # type: ignore[assignment]
@@ -125,6 +129,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             config: Dict[str, Any] = {"cwd": str(p)}
             if GITHUB_TOKEN:
                 config["github_token"] = GITHUB_TOKEN
+            system_cli = shutil.which("copilot")
+            if system_cli:
+                config["cli_path"] = system_cli
             self.client = CopilotClient(config)
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
 
@@ -318,6 +325,20 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                     "default_effort": default_effort,
                 })
             self._models_cache = results
+
+            # If the user has an active session, ensure its model always appears
+            # in the picker, even if models.list hasn't been updated yet.
+            active_model = self.current_model
+            if active_model and not any(r["id"] == active_model for r in results):
+                results.insert(0, {
+                    "id": active_model,
+                    "multiplier": "1x",
+                    "supports_reasoning": False,
+                    "supported_efforts": [],
+                    "default_effort": None,
+                })
+                logger.info(f"ℹ️  Injected active session model into list: {active_model}")
+
             logger.info(f"📊 Cached context limits for {len(self._context_limits_cache)} models")
             return results
         except Exception as e:
