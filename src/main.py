@@ -18,6 +18,9 @@ from src.handlers.commands import (
     context_command,
     model_command, share_command, cancel_command,
     session_command,
+    diff_command, instructions_command, update_command, allow_all_command,
+    effort_command, sessions_command, infinite_command, ping_command,
+    compact_command, review_command, changelog_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -39,14 +42,25 @@ async def setup_bot_commands(application):
         BotCommand("plan", "Architecture & Planning mode"),
         BotCommand("edit", "Standard Chat/Coding mode"),
         BotCommand("model", "Switch AI Model"),
+        BotCommand("effort", "Set reasoning effort level"),
+        BotCommand("sessions", "Browse & resume past sessions"),
         BotCommand("clear", "Reset conversation memory"),
+        BotCommand("compact", "Compact context (smart reset)"),
         BotCommand("cancel", "Cancel in-progress request"),
         BotCommand("share", "Export session to Markdown"),
         BotCommand("usage", "Display session usage metrics"),
         BotCommand("context", "Display model context info"),
         BotCommand("session", "Show session info & workspace summary"),
+        BotCommand("infinite", "Toggle infinite sessions (auto-compaction)"),
+        BotCommand("allowall", "Toggle allow-all-tools mode"),
+        BotCommand("diff", "Show git diff"),
+        BotCommand("review", "AI code review of current diff"),
+        BotCommand("changelog", "Generate changelog from git log"),
+        BotCommand("instructions", "View Copilot instructions file"),
         BotCommand("ls", "Project file tree"),
         BotCommand("cwd", "Show current directory"),
+        BotCommand("ping", "Check CLI connection status"),
+        BotCommand("update", "Update Copilot CLI"),
     ]
     try:
         # Set bot commands
@@ -129,6 +143,17 @@ def main():
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("session", session_command))
+    app.add_handler(CommandHandler("diff", diff_command))
+    app.add_handler(CommandHandler("instructions", instructions_command))
+    app.add_handler(CommandHandler("update", update_command))
+    app.add_handler(CommandHandler("allowall", allow_all_command))
+    app.add_handler(CommandHandler("effort", effort_command))
+    app.add_handler(CommandHandler("sessions", sessions_command))
+    app.add_handler(CommandHandler("infinite", infinite_command))
+    app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("compact", compact_command))
+    app.add_handler(CommandHandler("review", review_command))
+    app.add_handler(CommandHandler("changelog", changelog_command))
     
     # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))

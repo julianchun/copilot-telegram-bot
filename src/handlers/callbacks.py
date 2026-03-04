@@ -151,6 +151,18 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
+async def _handle_session_callback(query, context):
+    """Handle session: callback queries — resume a past session by ID."""
+    session_id = query.data.split(":", 1)[1]
+    msg = await query.message.reply_text(f"🔄 Resuming session {session_id[:8]}...")
+    try:
+        await service.resume_session_by_id(session_id)
+        await msg.edit_text(f"✅ Session resumed: {session_id[:8]}\nConversation history restored.")
+    except Exception as e:
+        logger.error(f"Session resume failed: {e}")
+        await msg.edit_text(f"⚠️ Failed to resume session: {e}")
+
+
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
     folder = query.data.split(":")[1]
@@ -202,6 +214,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):
             await _handle_reasoning_callback(query, context)
+        elif data.startswith("session:"):
+            await _handle_session_callback(query, context)
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
             return ConversationHandler.END
