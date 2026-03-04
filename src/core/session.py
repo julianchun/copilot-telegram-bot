@@ -16,6 +16,8 @@ from src.config import (
 from src.core.context import ctx
 from src.core.usage import SessionUsageTracker, SessionInfo
 
+from copilot import PermissionHandler
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,13 +82,13 @@ class SessionMixin:
 
         if self._is_running:
             try:
-                errors = await asyncio.wait_for(self.client.stop(), timeout=10)
-                if errors:
-                    for err in errors:
-                        logger.warning(f"⚠️ Client stop error: {err.message}")
+                await asyncio.wait_for(self.client.stop(), timeout=10)
             except asyncio.TimeoutError:
                 logger.warning("⏱️ Graceful stop timed out, forcing stop...")
                 await self.client.force_stop()
+            except ExceptionGroup as eg:
+                for err in eg.exceptions:
+                    logger.warning(f"⚠️ Client stop error: {err}")
             except Exception as e:
                 logger.error(f"Error during client stop: {e}")
                 try:
@@ -125,18 +127,57 @@ class SessionMixin:
         await self._create_session()
 
     async def change_model(self, model: str, reasoning_effort: str = None):
-        """Change the model by resetting the session (conversation history will be lost).
+        """Change model and/or reasoning_effort without losing conversation history.
 
-        Note: Session resume with model change causes duplicate events in SDK v0.1.23.
-        See: https://github.com/julianchun/copilot-cli-telegram-bot/issues/2
+        Uses resume_session() which supports both model and reasoning_effort
+        and preserves conversation history on the CLI side.
+
+        Avoids session.set_model() because:
+          1. session.model.switchTo is not yet implemented in CLI (v0.1.30 e2e still skipped)
+          2. set_model() has no reasoning_effort parameter — silently drops effort changes
         """
-        self.current_reasoning_effort = reasoning_effort
+        reasoning_effort_changed = reasoning_effort != self.current_reasoning_effort
+        model_changed = model != self.current_model
 
+        self.current_reasoning_effort = reasoning_effort
         self.current_model = model
         self.user_selected_model = model
-        logger.info(f"🔄 Changing model to {model} (will reset session)")
 
-        await self.reset_session(model)
+        if not self.session:
+            await self.reset_session(model)
+            return
+
+        if not (model_changed or reasoning_effort_changed):
+            logger.info("change_model called with no actual changes — skipping")
+            return
+
+        session_id = self.session.session_id
+        logger.info(f"🔄 Resuming session with model={model}, reasoning_effort={reasoning_effort}")
+
+        self._unsubscribe_handlers()
+        try:
+            await self.session.destroy()
+        except Exception as e:
+            logger.warning(f"Error destroying session before resume: {e}")
+        self.session = None
+
+        resume_config = {
+            "model": model,
+            "on_permission_request": PermissionHandler.approve_all,
+            "hooks": {
+                "on_pre_tool_use": self._permission_bridge,
+                "on_session_end": self._on_session_end,
+            },
+            "on_user_input_request": self._user_input_bridge,
+            "client_name": "copilot-telegram-bot",
+        }
+        if reasoning_effort:
+            resume_config["reasoning_effort"] = reasoning_effort
+
+        self.session = await self.client.resume_session(session_id, resume_config)
+        self._event_unsubscribe = self.session.on(self._handle_event)
+        self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
+        logger.info(f"✅ Session resumed with model={model}, reasoning_effort={reasoning_effort}")
 
     async def populate_session_metadata(self):
         """Fetch session metadata (name, created, modified) from client.list_sessions()."""
@@ -208,7 +249,9 @@ class SessionMixin:
 
         session_config = {
             "model": model,
+            "client_name": "copilot-telegram-bot",
             "streaming": False,
+            "on_permission_request": PermissionHandler.approve_all,
             "hooks": {
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,

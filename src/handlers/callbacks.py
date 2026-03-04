@@ -130,7 +130,7 @@ async def _handle_model_callback(query, context):
         )
     else:
         await service.change_model(model)
-        await query.edit_message_text(f"✅ Model: {model} (⚠️ session reset)")
+        await query.edit_message_text(f"✅ Model: {model}")
 
 
 async def _handle_reasoning_callback(query, context):
@@ -147,7 +147,7 @@ async def _handle_reasoning_callback(query, context):
     await service.change_model(model, reasoning_effort=service.current_reasoning_effort)
     effort_display = effort.capitalize() if effort != "default" else "Default"
     await query.edit_message_text(
-        f"✅ Model: {model} | Effort: {effort_display}\n⚠️ Session reset",
+        f"✅ Model: {model} | Effort: {effort_display}\n",
     )
 
 

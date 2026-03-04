@@ -37,6 +37,7 @@ class EventHandlerMixin:
             SessionEventType.ASSISTANT_REASONING_DELTA: self._on_reasoning_delta,
             SessionEventType.SESSION_COMPACTION_START: self._on_compaction_start,
             SessionEventType.SESSION_COMPACTION_COMPLETE: self._on_compaction_complete,
+            SessionEventType.SESSION_CONTEXT_CHANGED: self._on_context_changed,
         }
 
     def _handle_event(self, event):
@@ -192,6 +193,19 @@ class EventHandlerMixin:
         logger.info(f"📦 Session compaction complete (success={success})")
         if ctx.status_callback:
             self._dispatch_async(ctx.status_callback, f"{status} Context compaction complete")
+
+    def _on_context_changed(self, event):
+        """Update usage tracker with context window data from SDK event."""
+        try:
+            token_count = getattr(event.data, 'token_count', None)
+            max_tokens = getattr(event.data, 'max_tokens', None)
+            if token_count is not None:
+                self.usage_tracker.current_tokens = int(token_count)
+            if max_tokens is not None:
+                self.usage_tracker.token_limit = int(max_tokens)
+            logger.debug(f"📊 Context changed: {token_count}/{max_tokens} tokens")
+        except Exception as e:
+            logger.debug(f"Context changed event handling failed: {e}")
 
     # ── Async dispatch helper ─────────────────────────────────────────
 

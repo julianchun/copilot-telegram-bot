@@ -4,7 +4,7 @@
 
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![SDK](https://img.shields.io/badge/Copilot-SDK-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
@@ -48,7 +48,7 @@ Tool executions get **specialized displays** — bash commands show syntax-highl
 
 ## 🛠️ Prerequisites
 
-1.  **Python 3.10+**
+1.  **Python 3.11+**
 2.  **[uv](https://github.com/astral-sh/uv)** (Fast Python package manager)
 3.  **GitHub Copilot CLI** (authenticated)
     ```bash
@@ -69,7 +69,7 @@ Tool executions get **specialized displays** — bash commands show syntax-highl
     uv sync
     ```
     
-    > **⚠️ Important:** There may be a permission issue with the copilot SDK binary on v0.1.23. After running `uv sync`, fix the file permissions:
+    > **⚠️ Important:** There may be a permission issue with the copilot SDK binary. After running `uv sync`, fix the file permissions:
     > ```bash
     > chmod +x ./.venv/lib/python3.*/site-packages/copilot/bin/copilot
     > ```
@@ -139,7 +139,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/help` | Show context-aware help with live status indicators. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
-| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. |
+| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. Conversation history is preserved. |
 | `/context` | Display model context and token usage info. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/session` | Show session info and workspace summary. |
@@ -183,7 +183,7 @@ Safe, read-only operations proceed automatically so you're not tapping "Allow" o
 **Permission Dialog Examples:**
 - **Shell Command**: "🛡️ Permission request: **bash** with: `npm install` — Allow?"
 - **File Write**: "🛡️ Permission request: **edit** with: `['src/app.ts']` — Allow?"
-- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → session restarts
+- **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → model switches without losing conversation
 - **Agent Questions**: "❓ **Copilot Asks:** What's your preferred testing framework? [Jest] [Vitest] [Cancel]"
 
 This keeps you **in the loop** on critical actions while maintaining a smooth flow for safe operations.
