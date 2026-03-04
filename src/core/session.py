@@ -201,6 +201,53 @@ class SessionMixin:
         except Exception as e:
             logger.warning(f"Failed to fetch session metadata: {e}")
 
+    async def resume_session_by_id(self, session_id: str):
+        """Resume an existing Copilot session by ID."""
+        logger.info(f"Resuming session: {session_id}")
+        self.cleanup_temp_dir()
+        self.session_id = str(uuid.uuid4())[:8]
+        self._tool_call_names.clear()
+        self.last_session_usage = None
+        self.last_assistant_usage = None
+        self.session_info = SessionInfo()
+        self._unsubscribe_handlers()
+
+        if self.session:
+            try:
+                await self.session.destroy()
+            except Exception as e:
+                logger.warning(f"Error destroying old session: {e}")
+            self.session = None
+
+        model = self.user_selected_model or self.current_model or DEFAULT_MODEL
+        resume_config = {
+            "model": model,
+            "streaming": False,
+            "hooks": {
+                "on_pre_tool_use": self._permission_bridge,
+                "on_session_end": self._on_session_end,
+            },
+            "on_user_input_request": self._user_input_bridge,
+        }
+        if self.current_reasoning_effort:
+            resume_config["reasoning_effort"] = self.current_reasoning_effort
+
+        self.session = await self.client.resume_session(session_id, resume_config)
+        self.current_model = model
+        logger.info(f"✅ Session resumed: {session_id}")
+
+        self.session_info.workspace_path = str(ctx.root_path)
+        self._extract_session_start_context()
+        self._event_unsubscribe = self.session.on(self._handle_event)
+        self.session_expired = False
+        ctx.clear_tracked_files()
+        ctx.session_start_time = datetime.now()
+        self.usage_tracker = SessionUsageTracker()
+        self.usage_tracker.session_start_time = time.time()
+        if self.current_model:
+            self.usage_tracker.selected_model = self.current_model
+        self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
+
     # ── Session hooks ─────────────────────────────────────────────────
 
     async def _on_session_end(self, input_data, invocation):
@@ -269,6 +316,8 @@ class SessionMixin:
         }
         if self.current_reasoning_effort:
             session_config["reasoning_effort"] = self.current_reasoning_effort
+        if self.infinite_sessions_enabled:
+            session_config["infinite_sessions"] = {"enabled": True}
 
         self.session = await self.client.create_session(session_config)
         self.current_model = model
@@ -336,6 +385,11 @@ class SessionMixin:
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get('toolName', 'unknown')
         tool_args = input_data.get('arguments', {})
+
+        # Auto-approve when allow_all_tools is enabled
+        if self.allow_all_tools:
+            logger.info(f"✅ Auto-approved (allow_all mode): {tool_name}")
+            return {"permissionDecision": "allow"}
 
         # Auto-approve tools in allowlist
         if tool_name in _TOOL_ALLOWLIST:
