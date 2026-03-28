@@ -9,7 +9,6 @@ from typing import Optional
 
 from src.config import (
     DEFAULT_MODEL,
-    GITHUB_TOKEN,
     INTERACTION_TIMEOUT,
     PERMISSION_TIMEOUT,
 )
@@ -24,9 +23,8 @@ logger = logging.getLogger(__name__)
 # ── Tool allowlist (auto-approved without asking user) ────────────────
 
 _TOOL_ALLOWLIST = frozenset({
-    "report_intent", "task", "list_files", "read_file",
-    "view", "glob", "grep", "fetch_copilot_cli_documentation",
-    "ask_user", "update_todo", "edit"
+    "report_intent", "task", "view", "glob", "grep",
+    "fetch_copilot_cli_documentation", "ask_user", "update_todo", "edit",
 })
 
 
@@ -44,7 +42,7 @@ class SessionMixin:
 
     Expects the host class to have:
       client, session, session_id, session_info, _is_running,
-      _event_unsubscribe, _usage_unsubscribe, current_model,
+      _usage_unsubscribe, current_model,
       user_selected_model, current_reasoning_effort, interaction_callback,
       session_expired, session_end_callback, usage_tracker,
       _tool_call_names, _chat_lock, last_session_usage, last_assistant_usage,
@@ -129,12 +127,8 @@ class SessionMixin:
     async def change_model(self, model: str, reasoning_effort: str = None):
         """Change model and/or reasoning_effort without losing conversation history.
 
-        Uses resume_session() which supports both model and reasoning_effort
-        and preserves conversation history on the CLI side.
-
-        Avoids session.set_model() because:
-          1. session.model.switchTo is not yet implemented in CLI (v0.1.30 e2e still skipped)
-          2. set_model() has no reasoning_effort parameter — silently drops effort changes
+        Uses session.set_model() (v0.2.0+) which supports both model and
+        reasoning_effort and preserves conversation history in-place.
         """
         reasoning_effort_changed = reasoning_effort != self.current_reasoning_effort
         model_changed = model != self.current_model
@@ -151,33 +145,13 @@ class SessionMixin:
             logger.info("change_model called with no actual changes — skipping")
             return
 
-        session_id = self.session.session_id
-        logger.info(f"🔄 Resuming session with model={model}, reasoning_effort={reasoning_effort}")
-
-        self._unsubscribe_handlers()
+        logger.info(f"🔄 Switching model to {model}, reasoning_effort={reasoning_effort}")
         try:
-            await self.session.destroy()
+            await self.session.set_model(model, reasoning_effort=reasoning_effort)
+            logger.info(f"✅ Model switched to {model}, reasoning_effort={reasoning_effort}")
         except Exception as e:
-            logger.warning(f"Error destroying session before resume: {e}")
-        self.session = None
-
-        resume_config = {
-            "model": model,
-            "on_permission_request": PermissionHandler.approve_all,
-            "hooks": {
-                "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": self._on_session_end,
-            },
-            "on_user_input_request": self._user_input_bridge,
-            "client_name": "copilot-telegram-bot",
-        }
-        if reasoning_effort:
-            resume_config["reasoning_effort"] = reasoning_effort
-
-        self.session = await self.client.resume_session(session_id, resume_config)
-        self._event_unsubscribe = self.session.on(self._handle_event)
-        self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
-        logger.info(f"✅ Session resumed with model={model}, reasoning_effort={reasoning_effort}")
+            logger.warning(f"set_model() failed ({e}), falling back to session reset")
+            await self.reset_session(model)
 
     async def populate_session_metadata(self):
         """Fetch session metadata (name, created, modified) from client.list_sessions()."""
@@ -227,14 +201,11 @@ class SessionMixin:
     # ── Internal helpers ──────────────────────────────────────────────
 
     def _unsubscribe_handlers(self):
-        """Unsubscribe from event and usage handlers (deduplicated helper)."""
-        if self._event_unsubscribe:
-            try:
-                self._event_unsubscribe()
-            except Exception as e:
-                logger.warning(f"Failed to unsubscribe event handler: {e}")
-            self._event_unsubscribe = None
+        """Unsubscribe usage tracker handler.
 
+        The main event handler is registered via on_event= in create_session()
+        and is tied to the session lifetime — no manual unsubscribe needed.
+        """
         if self._usage_unsubscribe:
             try:
                 self._usage_unsubscribe()
@@ -244,42 +215,50 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
+        from src.core.tools import list_files, read_file
+        from src.core.agents import PLANNER_AGENT
+
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
 
-        session_config = {
-            "model": model,
-            "client_name": "copilot-telegram-bot",
-            "streaming": False,
-            "on_permission_request": PermissionHandler.approve_all,
-            "hooks": {
+        self.session = await self.client.create_session(
+            on_permission_request=PermissionHandler.approve_all,
+            model=model,
+            client_name="copilot-telegram-bot",
+            streaming=False,
+            tools=[list_files, read_file],
+            hooks={
                 "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
             },
-            "on_user_input_request": self._user_input_bridge,
-            "system_message": {
-                "mode": "append",
-                "content": (
-                    "You are assisting via a Telegram bot. "
-                    "Respond concisely and always use Plain text. "
-                    "Avoid HTML tags. Keep responses focused and actionable. "
-                    "**Format:** Response must be **PLAIN TEXT** (no markdown code blocks, use simple bullets)."
-                ),
+            on_user_input_request=self._user_input_bridge,
+            system_message={
+                "mode": "customize",
+                "sections": {
+                    "tone": {
+                        "action": "append",
+                        "content": (
+                            "\nYou are assisting via a Telegram bot. "
+                            "Respond concisely and always use Plain text. "
+                            "Avoid HTML tags. Keep responses focused and actionable. "
+                            "Format: Response must be PLAIN TEXT "
+                            "(no markdown code blocks, use simple bullets)."
+                        ),
+                    },
+                },
             },
-        }
-        if self.current_reasoning_effort:
-            session_config["reasoning_effort"] = self.current_reasoning_effort
-
-        self.session = await self.client.create_session(session_config)
+            custom_agents=[PLANNER_AGENT],
+            reasoning_effort=self.current_reasoning_effort,
+            on_event=self._handle_event,
+        )
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")
 
         # Populate initial session info with workspace details
         self.session_info.workspace_path = str(ctx.root_path)
-        self._extract_session_start_context()
 
-        # Subscribe to SDK events
-        self._event_unsubscribe = self.session.on(self._handle_event)
+        # on_event= in create_session handles all events including early ones;
+        # no separate session.on() needed for _handle_event.
         self.session_expired = False
         ctx.clear_tracked_files()
         ctx.session_start_time = datetime.now()
@@ -291,51 +270,16 @@ class SessionMixin:
             self.usage_tracker.selected_model = self.current_model
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
 
-    def _extract_session_start_context(self):
-        """Capture session context from session.start event via get_messages()."""
-        # Note: SESSION_START event doesn't fire reliably, so we query messages.
-        # This is called synchronously after session creation — we schedule the
-        # async work as a task.
-        async def _extract():
-            try:
-                messages = await self.session.get_messages()
-                if messages and len(messages) > 0:
-                    first_event = messages[0]
-                    if first_event.type.value == "session.start":
-                        self.session_info.session_id = getattr(first_event.data, 'session_id', None)
-                        self.session_info.selected_model = getattr(first_event.data, 'selected_model', None)
-                        self.session_info.copilot_version = getattr(first_event.data, 'copilot_version', None)
-                        self.session_info.producer = getattr(first_event.data, 'producer', None)
-
-                        if hasattr(first_event.data, 'context'):
-                            context = first_event.data.context
-                            if context and not isinstance(context, str):
-                                self.session_info.cwd = getattr(context, 'cwd', None)
-                                self.session_info.branch = getattr(context, 'branch', None)
-                                self.session_info.git_root = getattr(context, 'git_root', None)
-                                self.session_info.repository = getattr(context, 'repository', None)
-                                logger.info(
-                                    f"📍 Session context captured from session.start - "
-                                    f"CWD: {self.session_info.cwd}, Branch: {self.session_info.branch}, "
-                                    f"Git Root: {self.session_info.git_root}"
-                                )
-
-                        if self.session_info.selected_model and not self.user_selected_model:
-                            self.current_model = self.session_info.selected_model
-                            logger.info(f"🤖 SDK selected model: {self.current_model}")
-            except Exception as e:
-                logger.warning(f"Could not retrieve session context from messages: {e}")
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_extract())
-        except RuntimeError:
-            logger.debug("No running event loop — skipping session context extraction")
+        # If plan mode was active before session creation, select the agent now.
+        # Temporarily reset to force the RPC call in set_mode().
+        if self.current_mode == "plan":
+            self.current_mode = "general"
+            await self.set_mode("plan")
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get('toolName', 'unknown')
-        tool_args = input_data.get('arguments', {})
+        tool_args = input_data.get('toolArgs', {})
 
         # Auto-approve tools in allowlist
         if tool_name in _TOOL_ALLOWLIST:

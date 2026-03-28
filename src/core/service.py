@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
-from copilot import CopilotClient
+from copilot import CopilotClient, SubprocessConfig
 
 from src.config import (
     WORKSPACE_PATH,
@@ -29,6 +29,9 @@ from src.core.events import EventHandlerMixin
 from src.core.session import SessionMixin
 
 logger = logging.getLogger(__name__)
+
+# Import agent definitions from dedicated module (avoids circular imports)
+from src.core.agents import PLANNER_AGENT, PLANNER_AGENT_NAME  # noqa: E402
 
 
 class _RequestWrapper:
@@ -52,14 +55,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         # Initialize context root
         ctx.set_root(WORKSPACE_PATH)
 
-        config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
-        if GITHUB_TOKEN:
-            config["github_token"] = GITHUB_TOKEN
-        self.client = CopilotClient(config)
+        self.client = CopilotClient(SubprocessConfig(
+            cwd=str(ctx.root_path),
+            github_token=GITHUB_TOKEN or None,
+        ))
 
         self.session = None  # type: ignore[assignment]
         self.session_id: str = str(uuid.uuid4())[:8]
-        self._event_unsubscribe: Optional[Callable] = None
         self._usage_unsubscribe: Optional[Callable] = None
         self.current_callback: Optional[Callable] = None
         self.interaction_callback: Optional[Callable] = None
@@ -77,6 +79,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._tool_call_names: Dict[str, str] = {}
         self.session_expired: bool = False
         self.session_end_callback: Optional[Callable[[str], Any]] = None
+        self.current_mode: str = "general"  # "general" or "plan"
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
@@ -122,10 +125,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             ctx.set_root(p)
             self.session_info = SessionInfo()
 
-            config: Dict[str, Any] = {"cwd": str(p)}
-            if GITHUB_TOKEN:
-                config["github_token"] = GITHUB_TOKEN
-            self.client = CopilotClient(config)
+            self.client = CopilotClient(SubprocessConfig(
+                cwd=str(p),
+                github_token=GITHUB_TOKEN or None,
+            ))
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
 
             logger.info("Starting Copilot Client with new CWD...")
@@ -341,10 +344,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Project info ──────────────────────────────────────────────────
 
-    async def get_project_info_header(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_project_info_header(self) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
+        mode = "Plan" if self.current_mode == "plan" else "Chat"
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch_line = f"🔀 Branch: {git_info[1:]}\n" if git_info else ""
@@ -359,11 +362,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         )
         return header
 
-    async def get_cockpit_message(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_cockpit_message(self) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if (context_user_data and context_user_data.get('plan_mode')) else "Chat"
+        mode = "Plan" if self.current_mode == "plan" else "Chat"
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch = git_info[1:] if git_info else ""
@@ -385,6 +388,42 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     def get_project_structure(self, max_depth: int = 2) -> str:
         """Returns nested project structure with file sizes."""
         return get_project_structure(self.session_info.cwd, max_depth)
+
+    # ── Mode switching ──────────────────────────────────────────────
+
+    async def set_mode(self, mode: str) -> bool:
+        """Switch between 'general' and 'plan' mode via SDK agent RPC.
+
+        - "plan"    → selects the planner custom agent
+        - "general" → deselects any active agent (back to default Copilot)
+
+        Returns True if mode was changed, False otherwise.
+        The session and conversation history are preserved across switches.
+        """
+        if mode not in ("general", "plan"):
+            logger.warning(f"Ignoring invalid mode {mode!r}; allowed: 'general', 'plan'")
+            return False
+        if mode == self.current_mode:
+            return True  # already in desired mode
+        if self._chat_lock.locked():
+            logger.warning("Mode switch skipped — chat request in progress")
+            return False
+        if not self.session:
+            self.current_mode = mode  # will be applied when session is created
+            return True
+        try:
+            if mode == "plan":
+                from copilot.generated.rpc import SessionAgentSelectParams
+                await self.session.rpc.agent.select(
+                    SessionAgentSelectParams(name=PLANNER_AGENT_NAME)
+                )
+            else:
+                await self.session.rpc.agent.deselect()
+            self.current_mode = mode
+            return True
+        except Exception as e:
+            logger.warning(f"Agent switch failed (non-fatal): {e}")
+            return False
 
     # ── Chat ──────────────────────────────────────────────────────────
 
@@ -418,10 +457,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.completion_callback = completion_callback
 
             try:
-                msg_options: dict = {"prompt": user_message}
-                if attachments:
-                    msg_options["attachments"] = attachments
-                await self.session.send_and_wait(msg_options, timeout=INTERACTION_TIMEOUT)
+                await self.session.send_and_wait(
+                    user_message,
+                    attachments=attachments or None,
+                    timeout=INTERACTION_TIMEOUT,
+                )
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")

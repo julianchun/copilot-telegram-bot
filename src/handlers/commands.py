@@ -92,6 +92,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
     context.user_data['plan_mode'] = False
+    await service.set_mode("general")
     await service.reset_session()
     await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
@@ -115,6 +116,9 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
+    if not await service.set_mode("general"):
+        await update.message.reply_text("⏳ Please wait — a request is in progress.")
+        return
     context.user_data['plan_mode'] = False
     logger.info("Switched to Edit Mode")
     await update.message.reply_text("💬 Switched to Edit (Chat) Mode")
@@ -126,15 +130,21 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if args:
         # /plan <prompt> — force plan mode and send prompt
+        if not await service.set_mode("plan"):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
         context.user_data['plan_mode'] = True
         prompt = " ".join(args)
         await update.message.reply_text("📝 Plan Mode ON")
         await chat_handler(update, context, override_text=prompt)
     else:
         # /plan — toggle plan mode
-        mode = not context.user_data.get('plan_mode', False)
-        context.user_data['plan_mode'] = mode
-        if mode:
+        target = not context.user_data.get('plan_mode', False)
+        if not await service.set_mode("plan" if target else "general"):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
+        context.user_data['plan_mode'] = target
+        if target:
             await update.message.reply_text("📝 Switch to Plan Mode")
         else:
             await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
@@ -246,7 +256,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime_str = session_info.duration()
 
     model = service.user_selected_model or service.current_model or "Auto"
-    mode = "Planning" if context.user_data.get('plan_mode') else "Chat"
+    mode = "Planning" if service.current_mode == "plan" else "Chat"
     status = "Expired" if service.session_expired else "Active"
     
     # Full session ID from session_info
