@@ -422,9 +422,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """
         if mode == self.current_mode:
             return
-        self.current_mode = mode
         if not self.session:
-            return  # will be applied when session is created
+            self.current_mode = mode  # will be applied when session is created
+            return
         try:
             if mode == "plan":
                 from copilot.generated.rpc import SessionAgentSelectParams
@@ -433,6 +433,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                 )
             else:
                 await self.session.rpc.agent.deselect()
+            self.current_mode = mode
         except Exception as e:
             logger.warning(f"Agent switch failed (non-fatal): {e}")
 
