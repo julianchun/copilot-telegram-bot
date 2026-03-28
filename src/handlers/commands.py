@@ -250,7 +250,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime_str = session_info.duration()
 
     model = service.user_selected_model or service.current_model or "Auto"
-    mode = "Planning" if context.user_data.get('plan_mode') else "Chat"
+    mode = "Planning" if service.current_mode == "plan" else "Chat"
     status = "Expired" if service.session_expired else "Active"
     
     # Full session ID from session_info

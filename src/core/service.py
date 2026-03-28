@@ -30,29 +30,8 @@ from src.core.session import SessionMixin
 
 logger = logging.getLogger(__name__)
 
-# ── Planner agent ─────────────────────────────────────────────────────────────
-# Registered as a custom agent at session creation.  When the user toggles
-# "plan mode", we select/deselect this agent via RPC — the session and its
-# conversation history are preserved across switches.
-
-PLANNER_AGENT_NAME = "planner"
-
-PLANNER_AGENT: dict = {
-    "name": PLANNER_AGENT_NAME,
-    "display_name": "Plan Mode",
-    "description": "Creates clear, actionable plans without writing code.",
-    "prompt": (
-        "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n"
-        "1. Research the necessary information.\n"
-        "2. Ask clarifying questions if needed.\n"
-        "3. Deliver a structured, phased plan with short bullets, "
-        "file references, and rationale.\n"
-        "RULES: Do NOT create any files in the workspace. "
-        "Do NOT write any code. Response should be the plan in clear text. "
-        "No code blocks. Keep it scannable and mobile-friendly.\n"
-        "FORMAT: PLAIN TEXT (no markdown code blocks, use simple bullets)."
-    ),
-}
+# Import agent definitions from dedicated module (avoids circular imports)
+from src.core.agents import PLANNER_AGENT, PLANNER_AGENT_NAME  # noqa: E402
 
 
 class _RequestWrapper:
@@ -365,7 +344,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Project info ──────────────────────────────────────────────────
 
-    async def get_project_info_header(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_project_info_header(self) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
         model = self.user_selected_model or self.current_model or "Auto"
         mode = "Plan" if self.current_mode == "plan" else "Chat"
@@ -383,7 +362,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         )
         return header
 
-    async def get_cockpit_message(self, context_user_data: Optional[dict] = None) -> str:
+    async def get_cockpit_message(self) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         model = self.user_selected_model or self.current_model or "Auto"
@@ -420,7 +399,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         The session and conversation history are preserved across switches.
         """
+        if mode not in ("general", "plan"):
+            logger.warning(f"Ignoring invalid mode {mode!r}; allowed: 'general', 'plan'")
+            return
         if mode == self.current_mode:
+            return
+        if self._chat_lock.locked():
+            logger.warning("Mode switch skipped — chat request in progress")
             return
         if not self.session:
             self.current_mode = mode  # will be applied when session is created

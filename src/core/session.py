@@ -216,7 +216,7 @@ class SessionMixin:
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
         from src.core.tools import list_files, read_file
-        from src.core.service import PLANNER_AGENT
+        from src.core.agents import PLANNER_AGENT
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")

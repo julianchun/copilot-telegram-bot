@@ -58,7 +58,7 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.warning(f"⚠️ Failed to edit start message: {e}")
 
-    cockpit = await service.get_cockpit_message(context.user_data)
+    cockpit = await service.get_cockpit_message()
     await message.reply_text(cockpit)
 
 
