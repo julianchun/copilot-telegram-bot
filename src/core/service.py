@@ -391,25 +391,26 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Mode switching ──────────────────────────────────────────────
 
-    async def set_mode(self, mode: str) -> None:
+    async def set_mode(self, mode: str) -> bool:
         """Switch between 'general' and 'plan' mode via SDK agent RPC.
 
         - "plan"    → selects the planner custom agent
         - "general" → deselects any active agent (back to default Copilot)
 
+        Returns True if mode was changed, False otherwise.
         The session and conversation history are preserved across switches.
         """
         if mode not in ("general", "plan"):
             logger.warning(f"Ignoring invalid mode {mode!r}; allowed: 'general', 'plan'")
-            return
+            return False
         if mode == self.current_mode:
-            return
+            return True  # already in desired mode
         if self._chat_lock.locked():
             logger.warning("Mode switch skipped — chat request in progress")
-            return
+            return False
         if not self.session:
             self.current_mode = mode  # will be applied when session is created
-            return
+            return True
         try:
             if mode == "plan":
                 from copilot.generated.rpc import SessionAgentSelectParams
@@ -419,8 +420,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             else:
                 await self.session.rpc.agent.deselect()
             self.current_mode = mode
+            return True
         except Exception as e:
             logger.warning(f"Agent switch failed (non-fatal): {e}")
+            return False
 
     # ── Chat ──────────────────────────────────────────────────────────
 
