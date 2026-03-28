@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ListFilesParams(BaseModel):
     path: str = Field(description="The directory path to list files from. Defaults to current directory ('.').")
 
-@define_tool(description="List files and directories in the project.")
+@define_tool(description="List files and directories in the project.", skip_permission=True)
 async def list_files(params: ListFilesParams) -> str:
     target_path = Path(params.path)
     root = ctx.root_path
@@ -46,7 +46,7 @@ async def list_files(params: ListFilesParams) -> str:
 class ReadFileParams(BaseModel):
     path: str = Field(description="The relative path of the file to read.")
 
-@define_tool(description="Read the content of a file.")
+@define_tool(description="Read the content of a file.", skip_permission=True)
 async def read_file(params: ReadFileParams) -> str:
     target_path = Path(params.path)
     root = ctx.root_path

@@ -24,6 +24,7 @@ class EventHandlerMixin:
     def _build_handler_map(self) -> dict:
         """Build the event-type → handler lookup once per instance."""
         return {
+            SessionEventType.SESSION_START: self._on_session_start,
             SessionEventType.ASSISTANT_MESSAGE: self._on_assistant_message,
             SessionEventType.TOOL_EXECUTION_START: self._on_tool_start,
             SessionEventType.TOOL_EXECUTION_COMPLETE: self._on_tool_complete,
@@ -51,6 +52,32 @@ class EventHandlerMixin:
             handler(event)
 
     # ── Per-type handlers ─────────────────────────────────────────────
+
+    def _on_session_start(self, event):
+        """Capture session context from the session.start event (via on_event)."""
+        try:
+            data = event.data
+            self.session_info.session_id = getattr(data, 'session_id', None)
+            self.session_info.selected_model = getattr(data, 'selected_model', None)
+            self.session_info.copilot_version = getattr(data, 'copilot_version', None)
+            self.session_info.producer = getattr(data, 'producer', None)
+
+            context = getattr(data, 'context', None)
+            if context and not isinstance(context, str):
+                self.session_info.cwd = getattr(context, 'cwd', None)
+                self.session_info.branch = getattr(context, 'branch', None)
+                self.session_info.git_root = getattr(context, 'git_root', None)
+                self.session_info.repository = getattr(context, 'repository', None)
+                logger.info(
+                    f"📍 Session context from session.start — "
+                    f"CWD: {self.session_info.cwd}, Branch: {self.session_info.branch}"
+                )
+
+            if self.session_info.selected_model and not self.user_selected_model:
+                self.current_model = self.session_info.selected_model
+                logger.info(f"🤖 SDK selected model: {self.current_model}")
+        except Exception as e:
+            logger.warning(f"Failed to process session.start event: {e}")
 
     def _on_assistant_message(self, event):
         """Capture the complete assistant message (streaming is disabled)."""

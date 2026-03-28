@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
-from copilot import CopilotClient
+from copilot import CopilotClient, SubprocessConfig
 
 from src.config import (
     WORKSPACE_PATH,
@@ -52,14 +52,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         # Initialize context root
         ctx.set_root(WORKSPACE_PATH)
 
-        config: Dict[str, Any] = {"cwd": str(ctx.root_path)}
-        if GITHUB_TOKEN:
-            config["github_token"] = GITHUB_TOKEN
-        self.client = CopilotClient(config)
+        self.client = CopilotClient(SubprocessConfig(
+            cwd=str(ctx.root_path),
+            github_token=GITHUB_TOKEN or None,
+        ))
 
         self.session = None  # type: ignore[assignment]
         self.session_id: str = str(uuid.uuid4())[:8]
-        self._event_unsubscribe: Optional[Callable] = None
         self._usage_unsubscribe: Optional[Callable] = None
         self.current_callback: Optional[Callable] = None
         self.interaction_callback: Optional[Callable] = None
@@ -122,10 +121,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             ctx.set_root(p)
             self.session_info = SessionInfo()
 
-            config: Dict[str, Any] = {"cwd": str(p)}
-            if GITHUB_TOKEN:
-                config["github_token"] = GITHUB_TOKEN
-            self.client = CopilotClient(config)
+            self.client = CopilotClient(SubprocessConfig(
+                cwd=str(p),
+                github_token=GITHUB_TOKEN or None,
+            ))
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
 
             logger.info("Starting Copilot Client with new CWD...")
@@ -418,10 +417,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.completion_callback = completion_callback
 
             try:
-                msg_options: dict = {"prompt": user_message}
-                if attachments:
-                    msg_options["attachments"] = attachments
-                await self.session.send_and_wait(msg_options, timeout=INTERACTION_TIMEOUT)
+                await self.session.send_and_wait(
+                    user_message,
+                    attachments=attachments or None,
+                    timeout=INTERACTION_TIMEOUT,
+                )
                 # abort() causes send_and_wait to return normally once session.idle fires
                 if self._cancelled:
                     raise asyncio.CancelledError("Request cancelled by user")
