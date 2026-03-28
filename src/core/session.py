@@ -216,6 +216,7 @@ class SessionMixin:
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
         from src.core.tools import list_files, read_file
+        from src.core.service import PLANNER_AGENT
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
@@ -246,6 +247,7 @@ class SessionMixin:
                     },
                 },
             },
+            custom_agents=[PLANNER_AGENT],
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
         )
@@ -267,6 +269,12 @@ class SessionMixin:
         if self.current_model:
             self.usage_tracker.selected_model = self.current_model
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
+
+        # If plan mode was active before session creation, select the agent now.
+        # Temporarily reset to force the RPC call in set_mode().
+        if self.current_mode == "plan":
+            self.current_mode = "general"
+            await self.set_mode("plan")
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""

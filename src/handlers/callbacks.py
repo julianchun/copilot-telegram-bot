@@ -46,6 +46,7 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     If `query` is provided (CallbackQuery), edits the original start message to remove the keyboard.
     """
     context.user_data['plan_mode'] = False
+    await service.set_mode("general")
     await service.set_working_directory(str(path))
 
     # Edit the start message to remove inline keyboard and show final status

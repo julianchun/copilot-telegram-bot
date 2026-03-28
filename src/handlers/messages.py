@@ -84,7 +84,9 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             
     if not user_text: return
 
+    # Sync mode state → SDK agent selection (no-op if already correct)
     mode = "plan" if context.user_data.get('plan_mode') else "general"
+    await service.set_mode(mode)
 
     # Initialize message sender with the user's message chat
     sender = MessageSender(update.message)
@@ -194,7 +196,6 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             interaction_callback=interaction_callback,
             completion_callback=on_completion,
             attachments=attachments,
-            mode=mode,
         )
         
         # Wait for completion signal
@@ -208,12 +209,12 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         try:
             project, model, cost = service.get_usage_metadata()
             git = await service.get_git_info()
-            mode = "Planning" if context.user_data.get('plan_mode') else "Chat"
+            mode_label = "Planning" if service.current_mode == "plan" else "Chat"
             parts = [f"📂 {project}"]
             if git:
                 parts.append(f"🔀 {git[1:]}")
             parts.append(f"🤖 {model} ({cost}x)")
-            parts.append(f"⚙️ Mode: {mode}")
+            parts.append(f"⚙️ Mode: {mode_label}")
             footer = "\n".join(parts)
         except Exception as e:
             logger.error(f"Footer generation failed: {e}")
