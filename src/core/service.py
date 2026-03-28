@@ -30,6 +30,34 @@ from src.core.session import SessionMixin
 
 logger = logging.getLogger(__name__)
 
+# ── Mode instructions ─────────────────────────────────────────────────────────
+# Prepended to each user message so the same session (and conversation context)
+# is preserved when switching between plan and general mode.
+
+_MODE_INSTRUCTIONS: dict[str, str] = {
+    "plan": (
+        "[PLAN MODE] Create a clear, actionable plan — do NOT write code.\n"
+        "1. Research the necessary information.\n"
+        "2. Ask clarifying questions if needed.\n"
+        "3. Deliver a structured, phased plan with short bullets, "
+        "file references, and rationale.\n"
+        "RULES: Do NOT create any files in the workspace. "
+        "Do NOT write any code. Response should be the plan in clear text. "
+        "No code blocks. Keep it scannable and mobile-friendly.\n"
+        "FORMAT: PLAIN TEXT (no markdown code blocks, use simple bullets).\n"
+        "---\n"
+    ),
+    "general": (
+        "[GENERAL MODE] You are an AI-powered coding assistant on a Telegram bot, "
+        "built on the GitHub Copilot CLI.\n"
+        "JOB: Help the user build, debug, and understand code using natural language, "
+        "deeply integrated with the GitHub workflow.\n"
+        "RULES: No code blocks. Keep it scannable and mobile-friendly.\n"
+        "FORMAT: PLAIN TEXT (no markdown code blocks, use simple bullets).\n"
+        "---\n"
+    ),
+}
+
 
 class _RequestWrapper:
     """Adapts SDK ask_user dict to an object with message/options/allowFreeform."""
@@ -395,6 +423,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         interaction_callback: Optional[Callable[[str, Any], Any]] = None,
         completion_callback: Optional[Callable[[], Any]] = None,
         attachments: Optional[list] = None,
+        mode: str = "general",
     ):
         """Send a message to the Copilot session and wait for completion.
 
@@ -406,7 +435,10 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         Args:
           attachments — optional list of SDK attachment dicts.
+          mode — "plan" or "general"; prepends mode-specific instructions.
         """
+        prompt = _MODE_INSTRUCTIONS[mode] + user_message
+
         async with self._chat_lock:
             self._cancelled = False
             if not self.session:
@@ -418,7 +450,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
             try:
                 await self.session.send_and_wait(
-                    user_message,
+                    prompt,
                     attachments=attachments or None,
                     timeout=INTERACTION_TIMEOUT,
                 )

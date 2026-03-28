@@ -14,28 +14,6 @@ from src.handlers.utils import security_check, check_project_selected
 
 logger = logging.getLogger(__name__)
 
-_PLAN_PROMPT = (
-    "You are in PLAN MODE. Create a clear, actionable plan — do NOT write code.\n\n"
-    "1. Research the necessary information.\n"
-    "2. Ask clarifying questions if needed.\n"
-    "3. Deliver a structured, phased plan with short bullets, file references, and rationale.\n\n"
-    "RULES: "
-    "Do NOT create any files (e.g., `plan.md`) in the session workspace. The user cannot access the session file system.\n\n"
-    "Do NOT write any code. Your entire response should be the plan in clear text"
-    "No code blocks. Keep it scannable and mobile-friendly.\n\n"
-    "FORMAT: Response must be PLAIN TEXT (no markdown code blocks, use simple bullets)."
-    "---\n\n"
-)
-
-_GENERAL_PROMPT = (
-    "You are in GENERAL Mode.\n"
-    "ROLE: You are an AI-powered coding assistant on a Telegram bot, built on the GitHub Copilot CLI.\n"
-    "JOB: Help the user build, debug, and understand code using natural language, deeply integrated with the GitHub workflow.\n\n"
-    "RULES: No code blocks. Keep it scannable and mobile-friendly.\n\n"
-    "FORMAT: Response must be PLAIN TEXT (no markdown code blocks, use simple bullets)."
-    "---\n"
-)
-
 # Pending Interactions (Future map) - Shared with callbacks
 # Structure: {interaction_id: {"future": Future, "timestamp": float, "chat_id": int, "context": ContextTypes.DEFAULT_TYPE}}
 PENDING_INTERACTIONS: dict[str, dict[str, Any]] = {}
@@ -106,10 +84,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             
     if not user_text: return
 
-    if context.user_data.get('plan_mode'):
-        user_text = _PLAN_PROMPT + user_text
-    else:
-        user_text = _GENERAL_PROMPT + user_text
+    mode = "plan" if context.user_data.get('plan_mode') else "general"
 
     # Initialize message sender with the user's message chat
     sender = MessageSender(update.message)
@@ -219,6 +194,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             interaction_callback=interaction_callback,
             completion_callback=on_completion,
             attachments=attachments,
+            mode=mode,
         )
         
         # Wait for completion signal
