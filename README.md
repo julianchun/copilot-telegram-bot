@@ -1,5 +1,7 @@
 # 🤖 copilot-telegram-bot
 
+[![Tests](https://github.com/julianchun/copilot-telegram-bot/actions/workflows/test.yml/badge.svg)](https://github.com/julianchun/copilot-telegram-bot/actions/workflows/test.yml)
+
 **Take GitHub Copilot anywhere on Telegram.**
 
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
