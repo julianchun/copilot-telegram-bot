@@ -108,7 +108,8 @@ class TestReadFilePathTraversal:
         result = await _read("%2e%2e/%2e%2e/etc/passwd")
         # Path won't decode percent-encoding, so this is just a bad filename.
         # It must NOT succeed in reading /etc/passwd.
-        assert "passwd" not in result or "Access denied" in result or "not found" in result.lower()
+        assert "root:" not in result
+        assert "access denied" in result.lower() or "not found" in result.lower()
 
     async def test_valid_relative(self, tmp_path):
         result = await _read("README.md")

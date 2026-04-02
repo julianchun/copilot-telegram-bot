@@ -1,7 +1,7 @@
 """Unit tests for src/core/usage.py."""
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,21 +33,33 @@ def test_model_usage_defaults():
 
 
 def test_session_info_duration_hours():
-    created = (datetime.now() - timedelta(hours=1, minutes=5, seconds=30)).isoformat()
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+    created = (fixed_now - timedelta(hours=1, minutes=5, seconds=30)).isoformat()
     info = SessionInfo(created=created)
-    assert info.duration() == "1h 5m 30s"
+    with patch("src.core.usage.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        assert info.duration() == "1h 5m 30s"
 
 
 def test_session_info_duration_minutes():
-    created = (datetime.now() - timedelta(minutes=5, seconds=30)).isoformat()
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+    created = (fixed_now - timedelta(minutes=5, seconds=30)).isoformat()
     info = SessionInfo(created=created)
-    assert info.duration() == "5m 30s"
+    with patch("src.core.usage.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        assert info.duration() == "5m 30s"
 
 
 def test_session_info_duration_seconds():
-    created = (datetime.now() - timedelta(seconds=30)).isoformat()
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0)
+    created = (fixed_now - timedelta(seconds=30)).isoformat()
     info = SessionInfo(created=created)
-    assert info.duration() == "30s"
+    with patch("src.core.usage.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        mock_dt.fromisoformat = datetime.fromisoformat
+        assert info.duration() == "30s"
 
 
 def test_session_info_duration_no_created():
