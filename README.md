@@ -1,4 +1,4 @@
-# 🤖 copilot-telegram-bot
+# copilot-telegram-bot
 
 **Take GitHub Copilot anywhere on Telegram.**
 
@@ -69,12 +69,6 @@ Tool executions get **specialized displays** — bash commands show syntax-highl
     uv sync
     ```
     
-    > **⚠️ Important:** There may be a permission issue with the copilot SDK binary. After running `uv sync`, fix the file permissions:
-    > ```bash
-    > chmod +x ./.venv/lib/python3.*/site-packages/copilot/bin/copilot
-    > ```
-    > Adjust the Python version (3.*) to match your environment.
-
 3.  **Configuration**
     Create a `.env` file in the root directory:
     ```bash

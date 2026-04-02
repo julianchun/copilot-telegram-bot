@@ -10,3 +10,14 @@ dependencies = [
     "github-copilot-sdk==0.2.0",
     "pydantic>=2.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
