@@ -11,6 +11,7 @@ from src.config import (
     DEFAULT_MODEL,
     INTERACTION_TIMEOUT,
     PERMISSION_TIMEOUT,
+    MCP_SERVERS,
 )
 from src.core.context import ctx
 from src.core.usage import SessionUsageTracker, SessionInfo
@@ -250,6 +251,7 @@ class SessionMixin:
             custom_agents=[PLANNER_AGENT],
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
+            mcp_servers=MCP_SERVERS,
         )
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")
