@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -55,3 +56,26 @@ TRACKED_FILES_PRUNE_SIZE = 100     # keep last N files when pruning
 FILE_CONTENT_LIMIT = 100_000       # max characters when reading file content
 TELEGRAM_MSG_LIMIT = 4000          # safe margin below Telegram's 4096 char limit
 PERMISSION_TIMEOUT = 60.0          # seconds — timeout for tool permission requests
+
+# ── MCP Server Configuration ─────────────────────────────────────────────────
+
+MCP_CONFIG_PATH = Path(os.getenv(
+    "MCP_CONFIG_PATH",
+    Path.home() / ".copilot" / "mcp-config.json",
+))
+
+MCP_SERVERS: dict | None = None
+
+if MCP_CONFIG_PATH.exists():
+    try:
+        with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
+            _mcp_data = json.load(f)
+        MCP_SERVERS = _mcp_data.get("mcpServers")
+        if MCP_SERVERS:
+            logger.info(f"🔌 Loaded {len(MCP_SERVERS)} MCP server(s) from {MCP_CONFIG_PATH}: {', '.join(MCP_SERVERS.keys())}")
+        else:
+            logger.info(f"📄 MCP config found at {MCP_CONFIG_PATH} but no servers defined")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to load MCP config from {MCP_CONFIG_PATH}: {e}")
+else:
+    logger.info(f"📄 No MCP config found at {MCP_CONFIG_PATH}")
