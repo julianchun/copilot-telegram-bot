@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- MCP (Model Context Protocol) server support — connect external tools via local subprocess or remote HTTP/SSE servers. Configured through `~/.copilot/mcp-config.json` or `MCP_CONFIG_PATH` env var. ([#17](https://github.com/julianchun/copilot-telegram-bot/pull/17))
 - Custom agent-based plan/edit mode switching via SDK `session.rpc.agent.select()`/`deselect()` — session context preserved across mode switches
 - `on_event` parameter in `create_session()` for reliable early event delivery (e.g., `SESSION_START`)
 - `skip_permission=True` on read-only custom tools (`list_files`, `read_file`)
