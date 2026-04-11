@@ -39,6 +39,9 @@ Every response is equipped with a **Real-time Context Footer**, giving you criti
 
 Tool executions get **specialized displays** — bash commands show syntax-highlighted output, file edits show diffs, and long outputs are auto-truncated. Sub-agent activity (when Copilot spawns workers) is surfaced in real-time.
 
+### 🔌 MCP Server Integration
+Connect external [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers to extend Copilot with custom tools — databases, APIs, file systems, or any service exposing an MCP interface. Supports both local subprocess servers and remote HTTP/SSE endpoints. Loaded at startup from a simple JSON config.
+
 ### 🛡️ Security & Control (Human-in-the-Loop)
 - **Workspace Confinement:** Server-side enforcement of workspace paths. All file access restricted to `WORKSPACE_ROOT` + optional `GRANTED_PROJECTS` paths.
 - **Two-Tier Permission Model:** Safe, read-only tools (`list_files`, `read_file`, `view`, `glob`, etc.) are **auto-approved** for seamless flow. Dangerous tools (`bash`, `edit`, `create`) require **explicit user approval** via inline buttons.
@@ -82,10 +85,45 @@ Tool executions get **specialized displays** — bash commands show syntax-highl
     WORKSPACE_ROOT=/absolute/path/to/your/projects
     GRANTED_PROJECTS=/optional/additional/paths  # Comma-separated, optional
     GITHUB_TOKEN=ghp_your_github_token_here  # Optional, see below
+    MCP_CONFIG_PATH=                          # Optional, defaults to ~/.copilot/mcp-config.json
     ```
     > **ALLOWED_USER_ID** is mandatory—only this user can access the bot. Get your ID from the first bot message if not set.
     
     > **WORKSPACE_ROOT** is your project sandbox. The bot cannot access files outside this directory (or `GRANTED_PROJECTS`).
+    
+    ### MCP Server Support (Optional)
+    
+    Connect external [MCP servers](https://modelcontextprotocol.io/) to give Copilot access to additional tools (databases, APIs, custom services, etc.).
+    
+    Create an MCP config file at `~/.copilot/mcp-config.json` (or set `MCP_CONFIG_PATH` in `.env`):
+    
+    ```json
+    {
+      "mcpServers": {
+        "my-server": {
+          "type": "local",
+          "command": "node",
+          "args": ["./my-mcp-server.js"],
+          "tools": ["*"],
+          "env": { "API_KEY": "your-key" }
+        },
+        "remote-server": {
+          "type": "http",
+          "url": "https://my-mcp-endpoint.example.com",
+          "headers": { "Authorization": "Bearer token" },
+          "tools": ["*"]
+        }
+      }
+    }
+    ```
+    
+    **Server types:**
+    | Type | Fields | Use case |
+    | :--- | :--- | :--- |
+    | `local` / `stdio` | `command`, `args`, `env`, `cwd` | Local process (spawned as subprocess) |
+    | `http` / `sse` | `url`, `headers` | Remote HTTP or SSE endpoint |
+    
+    Set `"tools": ["*"]` to expose all tools from a server, or list specific tool names. If the config file is missing or has no `mcpServers` key, the bot starts normally without MCP.
     
     ### GitHub Authentication
     
