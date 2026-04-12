@@ -65,7 +65,7 @@ def _command_reference() -> str:
         "/share - Export session to Markdown\n"
         "/usage - Display session usage metrics\n"
         "/context - Display model context info\n"
-        "/session - Show session info and workspace summary\n\n"
+        "/session - Session management (info, files, plan)\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
         "/cwd - Show current directory\n"
