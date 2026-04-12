@@ -27,7 +27,8 @@ class FakeService(SessionMixin):
         self._chat_lock = asyncio.Lock()
         self.last_session_usage = None
         self.last_assistant_usage = None
-        self.current_mode = "general"
+        self.current_mode = "interactive"
+        self.current_agent = None
         self.cleanup_temp_dir = MagicMock()
         self._handle_event = MagicMock()
 

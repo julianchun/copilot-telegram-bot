@@ -17,7 +17,7 @@ from src.handlers.commands import (
     usage_command, plan_command, cwd_command, ls_command, 
     context_command,
     model_command, share_command, cancel_command,
-    session_command,
+    session_command, agent_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -38,6 +38,7 @@ async def setup_bot_commands(application):
         BotCommand("help", "Show help manual"),
         BotCommand("plan", "Architecture & Planning mode"),
         BotCommand("edit", "Standard Chat/Coding mode"),
+        BotCommand("agent", "View and select custom agents"),
         BotCommand("model", "Switch AI Model"),
         BotCommand("clear", "Reset conversation memory"),
         BotCommand("cancel", "Cancel in-progress request"),
@@ -122,6 +123,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("usage", usage_command))
     app.add_handler(CommandHandler("plan", plan_command))
+    app.add_handler(CommandHandler("agent", agent_command))
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("ls", ls_command))
     app.add_handler(CommandHandler("context", context_command))
