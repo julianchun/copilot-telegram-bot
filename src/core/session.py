@@ -274,13 +274,15 @@ class SessionMixin:
         if self.current_mode != "interactive":
             saved_mode = self.current_mode
             self.current_mode = "interactive"  # reset so set_mode() sees a change
-            await self.set_mode(saved_mode)
+            if not await self.set_mode(saved_mode):
+                logger.warning(f"Failed to restore mode '{saved_mode}' after session reset")
 
         # If a custom agent was selected before session creation, re-apply now.
         if self.current_agent:
             saved_agent = self.current_agent
             self.current_agent = None
-            await self.select_agent(saved_agent)
+            if not await self.select_agent(saved_agent):
+                logger.warning(f"Failed to restore agent '{saved_agent}' after session reset")
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
