@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from pathlib import Path
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -307,3 +308,105 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Health check — works without project selection."""
+    if not await security_check(update): return
+
+    client_ok = service._is_running
+    session_ok = service.session is not None and not service.session_expired
+
+    lines = [
+        "🏓 Pong!",
+        f"• Client: {'🟢 Running' if client_ok else '🔴 Not running'}",
+        f"• Session: {'🟢 Active' if session_ok else '🔴 None'}",
+    ]
+
+    # RPC health check (only if session exists)
+    if session_ok:
+        try:
+            t0 = time.monotonic()
+            await service.session.rpc.model.get_current()
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            lines.append(f"• RPC: 🟢 OK ({latency_ms}ms)")
+        except Exception as e:
+            lines.append(f"• RPC: 🔴 Error ({e})")
+
+    await update.message.reply_text("\n".join(lines))
+
+async def allowall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle auto-approve for all tool permissions."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    service.allow_all_tools = not service.allow_all_tools
+
+    if service.allow_all_tools:
+        await update.message.reply_text(
+            "🔓 Allow All: ON\n"
+            "All tool permissions auto-approved for this session."
+        )
+    else:
+        await update.message.reply_text(
+            "🔒 Allow All: OFF\n"
+            "Non-allowlisted tools will require approval."
+        )
+
+async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View or set custom instructions (.github/copilot-instructions.md)."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+    args = context.args
+
+    if not args:
+        # View current instructions
+        if instructions_path.exists():
+            content = instructions_path.read_text(encoding="utf-8").strip()
+            if content:
+                from src.config import TELEGRAM_MSG_LIMIT
+                display = content
+                if len(display) > TELEGRAM_MSG_LIMIT - 100:
+                    display = display[:TELEGRAM_MSG_LIMIT - 100] + "\n... truncated"
+                await update.message.reply_text(
+                    f"📋 Custom Instructions\n"
+                    f"─────────────────\n"
+                    f"{display}\n"
+                    f"─────────────────\n"
+                    f"File: .github/copilot-instructions.md"
+                )
+            else:
+                await update.message.reply_text(
+                    "📋 No custom instructions found.\n"
+                    "Use: /instructions <text> to set instructions."
+                )
+        else:
+            await update.message.reply_text(
+                "📋 No custom instructions found.\n"
+                "Use: /instructions <text> to set instructions."
+            )
+        return
+
+    # /instructions clear
+    if len(args) == 1 and args[0].lower() == "clear":
+        if instructions_path.exists():
+            instructions_path.unlink()
+            await service.reset_session()
+            await update.message.reply_text(
+                "🗑️ Custom instructions cleared.\n"
+                "Session reset to apply changes."
+            )
+        else:
+            await update.message.reply_text("📋 No custom instructions to clear.")
+        return
+
+    # /instructions <text> — set new instructions
+    text = " ".join(args)
+    instructions_path.parent.mkdir(parents=True, exist_ok=True)
+    instructions_path.write_text(text + "\n", encoding="utf-8")
+    await service.reset_session()
+    await update.message.reply_text(
+        "✅ Custom instructions updated.\n"
+        "Session reset to apply changes."
+    )

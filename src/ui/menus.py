@@ -68,7 +68,11 @@ def _command_reference() -> str:
         "/session - Show session info and workspace summary\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
-        "/cwd - Show current directory\n"
+        "/cwd - Show current directory\n\n"
+        "Utilities\n"
+        "/ping - Health check\n"
+        "/allowall - Toggle auto-approve permissions\n"
+        "/instructions - View/set custom instructions\n"
     )
 
 

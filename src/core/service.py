@@ -86,6 +86,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         self._chat_lock = asyncio.Lock()
         self._cancelled = False  # Set by /cancel to signal abort to chat_handler
+        self.allow_all_tools: bool = False  # /allowall toggle
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()

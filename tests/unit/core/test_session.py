@@ -30,6 +30,7 @@ class FakeService(SessionMixin):
         self.current_mode = "general"
         self.cleanup_temp_dir = MagicMock()
         self._handle_event = MagicMock()
+        self.allow_all_tools = False
 
 
 # ── _TOOL_ALLOWLIST ───────────────────────────────────────────────────

@@ -110,6 +110,7 @@ class SessionMixin:
         self._tool_call_names.clear()
         self.last_session_usage = None
         self.last_assistant_usage = None
+        self.allow_all_tools = False
 
         # Reset session info so /session shows fresh data
         self.session_info = SessionInfo()
@@ -282,6 +283,11 @@ class SessionMixin:
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get('toolName', 'unknown')
         tool_args = input_data.get('toolArgs', {})
+
+        # /allowall toggle: auto-approve everything
+        if self.allow_all_tools:
+            logger.info(f"✅ Auto-approved (allow_all mode): {tool_name}")
+            return {"permissionDecision": "allow"}
 
         # Auto-approve tools in allowlist
         if tool_name in _TOOL_ALLOWLIST:
