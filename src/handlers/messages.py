@@ -239,7 +239,18 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     except Exception as e:
         logger.error(f"Chat Error: {e}")
         await sender.delete_working()
-        await update.message.reply_text(f"⚠️ Error: {str(e)}")
+        # Auto-recover from sleep/wake session death
+        if "Session not found" in str(e) or "-32603" in str(e):
+            logger.info("🔄 Detected dead session, forcing reset...")
+            try:
+                service.session_expired = True
+                await service.set_working_directory(service.get_working_directory())
+                await update.message.reply_text("⚠️ Session was lost (sleep/wake?). Auto-recovered — please resend your message.")
+            except Exception as recovery_err:
+                logger.error(f"Recovery failed: {recovery_err}")
+                await update.message.reply_text("⚠️ Session lost and recovery failed. Please use /start to reconnect.")
+        else:
+            await update.message.reply_text(f"⚠️ Error: {str(e)}")
 
 
 async def _send_interaction_msg(update, context, chat_id, text, buttons):
