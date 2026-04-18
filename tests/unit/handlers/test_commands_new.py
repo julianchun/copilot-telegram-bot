@@ -7,9 +7,10 @@ import pytest
 
 
 def _service_patches(mock_service):
-    """Return combined patches for service in commands and utils modules."""
+    """Return combined patches for service in commands, callbacks, and utils modules."""
     return (
         patch("src.handlers.commands.service", mock_service),
+        patch("src.handlers.callbacks.service", mock_service),
         patch("src.handlers.utils.service", mock_service),
         patch("src.handlers.utils.ALLOWED_USER_ID", 12345),
     )
@@ -28,7 +29,8 @@ class TestPingCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import ping_command
             await ping_command(mock_update, mock_context)
 
@@ -45,7 +47,8 @@ class TestPingCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import ping_command
             await ping_command(mock_update, mock_context)
 
@@ -62,7 +65,8 @@ class TestPingCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import ping_command
             await ping_command(mock_update, mock_context)
 
@@ -78,7 +82,8 @@ class TestPingCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import ping_command
             await ping_command(mock_update, mock_context)
 
@@ -97,7 +102,8 @@ class TestAllowallCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import allowall_command
             await allowall_command(mock_update, mock_context)
 
@@ -111,7 +117,8 @@ class TestAllowallCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import allowall_command
             await allowall_command(mock_update, mock_context)
 
@@ -125,7 +132,8 @@ class TestAllowallCommand:
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import allowall_command
             await allowall_command(mock_update, mock_context)
 
@@ -138,7 +146,7 @@ class TestAllowallCommand:
 # ---------------------------------------------------------------------------
 
 class TestInstructionsCommand:
-    async def test_view_with_file(self, mock_update, mock_context, mock_service, tmp_path):
+    async def test_with_file_shows_active_status(self, mock_update, mock_context, mock_service, tmp_path):
         instructions_dir = tmp_path / ".github"
         instructions_dir.mkdir()
         instructions_file = instructions_dir / "copilot-instructions.md"
@@ -146,94 +154,45 @@ class TestInstructionsCommand:
 
         mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
         mock_service.project_selected = True
-        mock_context.args = None
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import instructions_command
             await instructions_command(mock_update, mock_context)
 
-        text = mock_update.message.reply_text.call_args[0][0]
-        assert "Use pytest for testing." in text
+        call_kwargs = mock_update.message.reply_text.call_args
+        text = call_kwargs[0][0]
+        assert "Active" in text
         assert "Custom Instructions" in text
+        # Should have inline keyboard with View and Clear buttons
+        assert "reply_markup" in call_kwargs[1]
 
-    async def test_view_no_file(self, mock_update, mock_context, mock_service, tmp_path):
+    async def test_no_file_shows_not_found(self, mock_update, mock_context, mock_service, tmp_path):
         mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
         mock_service.project_selected = True
-        mock_context.args = None
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import instructions_command
             await instructions_command(mock_update, mock_context)
 
-        text = mock_update.message.reply_text.call_args[0][0]
+        call_kwargs = mock_update.message.reply_text.call_args
+        text = call_kwargs[0][0]
         assert "No custom instructions found" in text
-
-    async def test_set_instructions(self, mock_update, mock_context, mock_service, tmp_path):
-        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
-        mock_service.project_selected = True
-        mock_service.reset_session = AsyncMock()
-        mock_context.args = ["Use", "black", "for", "formatting."]
-
-        with _service_patches(mock_service)[0], \
-             _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
-            from src.handlers.commands import instructions_command
-            await instructions_command(mock_update, mock_context)
-
-        instructions_file = tmp_path / ".github" / "copilot-instructions.md"
-        assert instructions_file.exists()
-        assert "Use black for formatting." in instructions_file.read_text()
-        mock_service.reset_session.assert_awaited_once()
-        text = mock_update.message.reply_text.call_args[0][0]
-        assert "updated" in text
-
-    async def test_clear_instructions(self, mock_update, mock_context, mock_service, tmp_path):
-        instructions_dir = tmp_path / ".github"
-        instructions_dir.mkdir()
-        instructions_file = instructions_dir / "copilot-instructions.md"
-        instructions_file.write_text("old instructions\n")
-
-        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
-        mock_service.project_selected = True
-        mock_service.reset_session = AsyncMock()
-        mock_context.args = ["clear"]
-
-        with _service_patches(mock_service)[0], \
-             _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
-            from src.handlers.commands import instructions_command
-            await instructions_command(mock_update, mock_context)
-
-        assert not instructions_file.exists()
-        mock_service.reset_session.assert_awaited_once()
-        text = mock_update.message.reply_text.call_args[0][0]
-        assert "cleared" in text
-
-    async def test_clear_no_file(self, mock_update, mock_context, mock_service, tmp_path):
-        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
-        mock_service.project_selected = True
-        mock_context.args = ["clear"]
-
-        with _service_patches(mock_service)[0], \
-             _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
-            from src.handlers.commands import instructions_command
-            await instructions_command(mock_update, mock_context)
-
-        text = mock_update.message.reply_text.call_args[0][0]
-        assert "No custom instructions to clear" in text
+        # Should have inline keyboard with Generate button
+        assert "reply_markup" in call_kwargs[1]
 
     async def test_requires_project(self, mock_update, mock_context, mock_service):
         mock_service.project_selected = False
-        mock_context.args = None
 
         with _service_patches(mock_service)[0], \
              _service_patches(mock_service)[1], \
-             _service_patches(mock_service)[2]:
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
             from src.handlers.commands import instructions_command
             await instructions_command(mock_update, mock_context)
 
@@ -241,6 +200,67 @@ class TestInstructionsCommand:
         calls = mock_update.message.reply_text.call_args_list
         assert len(calls) == 1
         assert "project" in calls[0][0][0].lower() or "select" in calls[0][0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# Instructions callbacks
+# ---------------------------------------------------------------------------
+
+class TestInstructionsCallbacks:
+    async def test_view_callback(self, mock_callback_query, mock_update, mock_context, mock_service, tmp_path):
+        instructions_dir = tmp_path / ".github"
+        instructions_dir.mkdir()
+        instructions_file = instructions_dir / "copilot-instructions.md"
+        instructions_file.write_text("Use pytest for testing.\n")
+
+        mock_callback_query.data = "instr:view"
+        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_instructions_callback
+            await _handle_instructions_callback(mock_callback_query, mock_update, mock_context)
+
+        text = mock_callback_query.edit_message_text.call_args[0][0]
+        assert "Use pytest for testing." in text
+
+    async def test_clear_callback(self, mock_callback_query, mock_update, mock_context, mock_service, tmp_path):
+        instructions_dir = tmp_path / ".github"
+        instructions_dir.mkdir()
+        instructions_file = instructions_dir / "copilot-instructions.md"
+        instructions_file.write_text("old instructions\n")
+
+        mock_callback_query.data = "instr:clear"
+        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
+        mock_service.reset_session = AsyncMock()
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_instructions_callback
+            await _handle_instructions_callback(mock_callback_query, mock_update, mock_context)
+
+        assert not instructions_file.exists()
+        mock_service.reset_session.assert_awaited_once()
+        text = mock_callback_query.edit_message_text.call_args[0][0]
+        assert "cleared" in text
+
+    async def test_clear_no_file(self, mock_callback_query, mock_update, mock_context, mock_service, tmp_path):
+        mock_callback_query.data = "instr:clear"
+        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_instructions_callback
+            await _handle_instructions_callback(mock_callback_query, mock_update, mock_context)
+
+        text = mock_callback_query.edit_message_text.call_args[0][0]
+        assert "No custom instructions" in text
 
 
 # ---------------------------------------------------------------------------

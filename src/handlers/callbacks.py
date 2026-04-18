@@ -152,6 +152,44 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
+async def _handle_skill_callback(query, context):
+    """Handle skill: callback queries — toggle a skill and refresh the list."""
+    from src.ui.menus import get_skill_keyboard, format_skill_list
+    skill_name = query.data.split(":", 1)[1]
+
+    # Get current state to determine toggle direction
+    skills = await service.list_skills()
+    current = next((s for s in skills if s["name"] == skill_name), None)
+    if not current:
+        await query.edit_message_text(f"⚠️ Skill '{skill_name}' not found.")
+        return
+
+    new_state = not current["enabled"]
+    success = await service.toggle_skill(skill_name, enable=new_state)
+    if not success:
+        await query.edit_message_text(f"⚠️ Failed to toggle skill '{skill_name}'.")
+        return
+
+    # Refresh the full list and update the message in-place
+    skills = await service.list_skills()
+    text = format_skill_list(skills)
+    keyboard = get_skill_keyboard(skills)
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def _handle_skill_reload_callback(query, context):
+    """Handle skill_reload callback — reload skills from disk and refresh."""
+    from src.ui.menus import get_skill_keyboard, format_skill_list
+    await service.reload_skills()
+    skills = await service.list_skills()
+    text = format_skill_list(skills)
+    if skills:
+        keyboard = get_skill_keyboard(skills)
+        await query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await query.edit_message_text(text)
+
+
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
     folder = query.data.split(":")[1]
@@ -181,6 +219,54 @@ async def _handle_granted_project_callback(query, context):
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
 
+async def _handle_instructions_callback(query, update, context):
+    """Handle instr: callback queries (view, clear, init)."""
+    action = query.data.split(":")[1]
+
+    if action == "view":
+        instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+        if instructions_path.exists():
+            content = instructions_path.read_text(encoding="utf-8").strip()
+            if content:
+                from src.config import TELEGRAM_MSG_LIMIT
+                display = content
+                if len(display) > TELEGRAM_MSG_LIMIT - 100:
+                    display = display[:TELEGRAM_MSG_LIMIT - 100] + "\n... truncated"
+                await query.edit_message_text(
+                    f"📋 Custom Instructions\n"
+                    f"─────────────────\n"
+                    f"{display}"
+                )
+            else:
+                await query.edit_message_text("📋 No custom instructions found.")
+        else:
+            await query.edit_message_text("📋 No custom instructions found.")
+
+    elif action == "clear":
+        instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+        if instructions_path.exists():
+            instructions_path.unlink()
+            await service.reset_session()
+            await query.edit_message_text(
+                "🗑️ Custom instructions cleared.\n"
+                "Session reset to apply changes."
+            )
+        else:
+            await query.edit_message_text("📋 No custom instructions to clear.")
+
+    elif action == "init":
+        await query.edit_message_text("🔍 Analyzing project to generate custom instructions...")
+        from src.handlers.messages import chat_handler
+        prompt = (
+            "Analyze this project's structure, tech stack, conventions, and patterns. "
+            "Then create a .github/copilot-instructions.md file with concise, actionable instructions "
+            "that will help Copilot understand this project. Include: language/framework, "
+            "coding conventions, build/test commands, project structure overview, "
+            "and any important patterns. Keep it focused and under 50 lines."
+        )
+        await chat_handler(update, context, override_text=prompt)
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -203,6 +289,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):
             await _handle_reasoning_callback(query, context)
+        elif data.startswith("skill:"):
+            await _handle_skill_callback(query, context)
+        elif data == "skill_reload":
+            await _handle_skill_reload_callback(query, context)
+        elif data.startswith("instr:"):
+            await _handle_instructions_callback(query, update, context)
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
             return ConversationHandler.END

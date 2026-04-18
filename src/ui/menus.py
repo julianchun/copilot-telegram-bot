@@ -50,6 +50,48 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 
+
+def get_skill_keyboard(skills_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    """Build inline keyboard for skill toggle. Each button shows ✅/❌ + name."""
+    btns = []
+    for s in skills_data:
+        name = s.get("name", "unknown")
+        icon = "✅" if s.get("enabled") else "❌"
+        btns.append(InlineKeyboardButton(f"{icon} {name}", callback_data=f"skill:{name}"))
+    buttons = _build_button_grid(btns)
+    buttons.append([InlineKeyboardButton("🔄 Reload Skills", callback_data="skill_reload")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
+    """Format skills list as a text message."""
+    if not skills_data:
+        return "🧩 No skills found."
+    lines = [f"🧩 Skills ({len(skills_data)} available)\n"]
+    for s in skills_data:
+        icon = "✅" if s.get("enabled") else "❌"
+        desc = s.get("description", "")
+        desc_part = f" — {desc}" if desc else ""
+        lines.append(f"{icon} {s['name']}{desc_part}")
+    lines.append("\nTap a skill to toggle it on/off.")
+    return "\n".join(lines)
+
+
+def get_instructions_keyboard(has_instructions: bool) -> InlineKeyboardMarkup:
+    """Build inline keyboard for instructions actions."""
+    buttons = []
+    if has_instructions:
+        buttons.append([
+            InlineKeyboardButton("👁️ View", callback_data="instr:view"),
+            InlineKeyboardButton("🗑️ Clear", callback_data="instr:clear"),
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton("🔍 Generate with /init", callback_data="instr:init"),
+        ])
+    return InlineKeyboardMarkup(buttons)
+
+
 def _command_reference() -> str:
     """Return the full command reference block."""
     return (
@@ -60,6 +102,7 @@ def _command_reference() -> str:
         "/edit - Standard Chat/Coding mode\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
+        "/skill - View & toggle skills\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
@@ -73,6 +116,7 @@ def _command_reference() -> str:
         "/ping - Health check\n"
         "/allowall - Toggle auto-approve permissions\n"
         "/instructions - View/set custom instructions\n"
+        "/init - Generate custom instructions for project\n"
     )
 
 

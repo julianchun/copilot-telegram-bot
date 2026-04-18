@@ -217,11 +217,18 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
+        from pathlib import Path
         from src.core.tools import list_files, read_file
         from src.core.agents import PLANNER_AGENT
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
+
+        # Build skill directories: bot-level + project-level
+        bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
+        skill_dirs = [bot_skills_dir]
+        if ctx.root_path:
+            skill_dirs.append(str(ctx.root_path))
 
         self.session = await self.client.create_session(
             on_permission_request=PermissionHandler.approve_all,
@@ -253,6 +260,7 @@ class SessionMixin:
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
             mcp_servers=MCP_SERVERS,
+            skill_directories=skill_dirs,
         )
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")

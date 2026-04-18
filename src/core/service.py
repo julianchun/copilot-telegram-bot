@@ -281,6 +281,60 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Get git info — delegates to core.git module."""
         return await _get_git_info(self.session_info.branch, self.session_info.cwd)
 
+    # ── Skills ────────────────────────────────────────────────────────
+
+    async def list_skills(self) -> List[Dict[str, str]]:
+        """Fetch available skills from the SDK session."""
+        if not self.session:
+            return []
+        try:
+            result = await self.session.rpc.skills.list()
+            return [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "enabled": s.enabled,
+                    "source": s.source,
+                }
+                for s in result.skills
+            ]
+        except Exception as e:
+            logger.error(f"Failed to list skills: {e}")
+            return []
+
+    async def toggle_skill(self, skill_name: str, enable: bool) -> bool:
+        """Enable or disable a skill by name. Returns True on success."""
+        if not self.session:
+            return False
+        try:
+            from copilot.generated.rpc import (
+                SessionSkillsEnableParams,
+                SessionSkillsDisableParams,
+            )
+            if enable:
+                await self.session.rpc.skills.enable(
+                    SessionSkillsEnableParams(name=skill_name)
+                )
+            else:
+                await self.session.rpc.skills.disable(
+                    SessionSkillsDisableParams(name=skill_name)
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to toggle skill '{skill_name}': {e}")
+            return False
+
+    async def reload_skills(self) -> bool:
+        """Reload skills from disk. Returns True on success."""
+        if not self.session:
+            return False
+        try:
+            await self.session.rpc.skills.reload()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reload skills: {e}")
+            return False
+
     # ── Models ────────────────────────────────────────────────────────
 
     async def get_available_models(self) -> List[Dict[str, str]]:

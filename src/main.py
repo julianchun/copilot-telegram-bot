@@ -16,9 +16,9 @@ from src.handlers.commands import (
     start_command, help_command, edit_command, clear_command, 
     usage_command, plan_command, cwd_command, ls_command, 
     context_command,
-    model_command, share_command, cancel_command,
+    model_command, skill_command, share_command, cancel_command,
     session_command,
-    ping_command, allowall_command, instructions_command,
+    ping_command, allowall_command, instructions_command, init_command,
     build_main_menu
 )
 from src.handlers.messages import chat_handler
@@ -40,6 +40,7 @@ async def setup_bot_commands(application):
         BotCommand("plan", "Architecture & Planning mode"),
         BotCommand("edit", "Standard Chat/Coding mode"),
         BotCommand("model", "Switch AI Model"),
+        BotCommand("skill", "View & toggle skills"),
         BotCommand("clear", "Reset conversation memory"),
         BotCommand("cancel", "Cancel in-progress request"),
         BotCommand("share", "Export session to Markdown"),
@@ -51,6 +52,7 @@ async def setup_bot_commands(application):
         BotCommand("ping", "Health check"),
         BotCommand("allowall", "Toggle auto-approve permissions"),
         BotCommand("instructions", "View/set custom instructions"),
+        BotCommand("init", "Generate custom instructions for project"),
     ]
     try:
         # Set bot commands
@@ -130,12 +132,14 @@ def main():
     app.add_handler(CommandHandler("ls", ls_command))
     app.add_handler(CommandHandler("context", context_command))
     app.add_handler(CommandHandler("model", model_command))
+    app.add_handler(CommandHandler("skill", skill_command))
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("session", session_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("allowall", allowall_command))
     app.add_handler(CommandHandler("instructions", instructions_command))
+    app.add_handler(CommandHandler("init", init_command))
     
     # Callbacks (non-project, e.g. perm:, input:, model:, reasoning:)
     app.add_handler(CallbackQueryHandler(button_handler))

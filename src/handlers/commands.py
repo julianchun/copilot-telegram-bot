@@ -225,6 +225,19 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_model_keyboard(await service.get_available_models())
     await msg.edit_text(f"Select a model:", reply_markup=keyboard)
 
+async def skill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.ui.menus import get_skill_keyboard, format_skill_list
+    msg = await update.message.reply_text("🔄 Fetching skills...")
+    skills = await service.list_skills()
+    text = format_skill_list(skills)
+    if skills:
+        keyboard = get_skill_keyboard(skills)
+        await msg.edit_text(text, reply_markup=keyboard)
+    else:
+        await msg.edit_text(text)
+
 async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
@@ -353,60 +366,48 @@ async def allowall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View or set custom instructions (.github/copilot-instructions.md)."""
+    """Show custom instructions status with inline action buttons."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
 
     instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
-    args = context.args
+    has_instructions = instructions_path.exists() and instructions_path.read_text(encoding="utf-8").strip()
 
-    if not args:
-        # View current instructions
-        if instructions_path.exists():
-            content = instructions_path.read_text(encoding="utf-8").strip()
-            if content:
-                from src.config import TELEGRAM_MSG_LIMIT
-                display = content
-                if len(display) > TELEGRAM_MSG_LIMIT - 100:
-                    display = display[:TELEGRAM_MSG_LIMIT - 100] + "\n... truncated"
-                await update.message.reply_text(
-                    f"📋 Custom Instructions\n"
-                    f"─────────────────\n"
-                    f"{display}\n"
-                    f"─────────────────\n"
-                    f"File: .github/copilot-instructions.md"
-                )
-            else:
-                await update.message.reply_text(
-                    "📋 No custom instructions found.\n"
-                    "Use: /instructions <text> to set instructions."
-                )
-        else:
+    from src.ui.menus import get_instructions_keyboard
+    if has_instructions:
+        size = instructions_path.stat().st_size
+        text = (
+            f"📋 Custom Instructions\n"
+            f"Status: ✅ Active\n"
+            f"File: .github/copilot-instructions.md ({size} bytes)"
+        )
+    else:
+        text = "📋 No custom instructions found."
+
+    keyboard = get_instructions_keyboard(has_instructions=bool(has_instructions))
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate .github/copilot-instructions.md by analyzing the project."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+    if instructions_path.exists():
+        content = instructions_path.read_text(encoding="utf-8").strip()
+        if content:
             await update.message.reply_text(
-                "📋 No custom instructions found.\n"
-                "Use: /instructions <text> to set instructions."
+                "📋 Custom instructions already exist.\n"
+                "Use /instructions to view or clear them first."
             )
-        return
+            return
 
-    # /instructions clear
-    if len(args) == 1 and args[0].lower() == "clear":
-        if instructions_path.exists():
-            instructions_path.unlink()
-            await service.reset_session()
-            await update.message.reply_text(
-                "🗑️ Custom instructions cleared.\n"
-                "Session reset to apply changes."
-            )
-        else:
-            await update.message.reply_text("📋 No custom instructions to clear.")
-        return
-
-    # /instructions <text> — set new instructions
-    text = " ".join(args)
-    instructions_path.parent.mkdir(parents=True, exist_ok=True)
-    instructions_path.write_text(text + "\n", encoding="utf-8")
-    await service.reset_session()
-    await update.message.reply_text(
-        "✅ Custom instructions updated.\n"
-        "Session reset to apply changes."
+    await update.message.reply_text("🔍 Analyzing project to generate custom instructions...")
+    prompt = (
+        "Analyze this project's structure, tech stack, conventions, and patterns. "
+        "Then create a .github/copilot-instructions.md file with concise, actionable instructions "
+        "that will help Copilot understand this project. Include: language/framework, "
+        "coding conventions, build/test commands, project structure overview, "
+        "and any important patterns. Keep it focused and under 50 lines."
     )
+    await chat_handler(update, context, override_text=prompt)
