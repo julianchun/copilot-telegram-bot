@@ -47,7 +47,7 @@ class TestSkillsList:
         assert "Available Skills" in text
         assert "code-review" in text
         assert "greeting" in text
-        assert "Found 3 skill" in text
+        assert "3 skills found" in text
         assert "/skills info" in text
 
     async def test_list_explicit(self, mock_update, mock_context, mock_service):
@@ -110,7 +110,7 @@ class TestSkillsList:
 
 class TestSkillsInfo:
     async def test_info_found(self, mock_update, mock_context, mock_service, tmp_path):
-        """Info shows skill details when found."""
+        """Info shows skill details in card style when found."""
         skill_dir = tmp_path / "code-review"
         skill_dir.mkdir()
         skill_file = skill_dir / "SKILL.md"
@@ -134,7 +134,10 @@ class TestSkillsInfo:
             await skills_command(mock_update, mock_context)
 
         text = sent_msg.edit_text.call_args[0][0]
-        assert "code-review" in text
+        assert "🧩 code-review" in text
+        assert "━━━" in text
+        assert "📂 Source: Project" in text
+        assert "✅ Enabled" in text
         assert "Code Review" in text
         assert "Does reviews." in text
 
@@ -227,11 +230,11 @@ class TestSkillUI:
         from src.ui.menus import format_skill_list
         text = format_skill_list(SAMPLE_SKILLS)
         assert "Available Skills" in text
-        assert "Project:" in text
-        assert "Built-in:" in text
-        assert "code-review" in text
-        assert "greeting" in text
-        assert "Found 3 skills" in text
+        assert "📂 Project" in text
+        assert "📦 Built-in" in text
+        assert "┌ code-review" in text
+        assert "┌ greeting" in text
+        assert "3 skills found" in text
         assert "/skills info" in text
 
     def test_format_skill_list_empty(self):
@@ -242,7 +245,14 @@ class TestSkillUI:
     def test_format_single_skill(self):
         from src.ui.menus import format_skill_list
         text = format_skill_list([SAMPLE_SKILLS[0]])
-        assert "Found 1 skill." in text
+        assert "1 skill found." in text
+
+    def test_format_truncates_long_description(self):
+        from src.ui.menus import format_skill_list
+        long_desc = "A" * 200
+        skills = [{"name": "test", "description": long_desc, "enabled": True, "source": "project", "path": None}]
+        text = format_skill_list(skills)
+        assert "..." in text
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
 
 
 def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
-    """Format skills list grouped by source, matching copilot-cli style."""
+    """Format skills list grouped by source, card style for Telegram mobile."""
     if not skills_data:
         return "🧩 No skills found."
 
@@ -60,7 +60,6 @@ def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
     groups: Dict[str, list] = {}
     for s in skills_data:
         source = s.get("source", "unknown").capitalize()
-        # Map SDK source names to friendly labels
         label = {
             "Project": "Project",
             "Personal": "Personal",
@@ -68,19 +67,27 @@ def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
         }.get(source, source)
         groups.setdefault(label, []).append(s)
 
-    lines = ["● Available Skills\n"]
+    # Source label → emoji
+    source_icons = {"Project": "📂", "Personal": "👤", "Built-in": "📦"}
+
+    lines = ["🧩 Available Skills\n"]
     for label, skills in groups.items():
-        lines.append(f"  {label}:")
+        icon = source_icons.get(label, "📁")
+        lines.append(f"{icon} {label}")
         for s in skills:
+            lines.append(f"┌ {s['name']}")
             desc = s.get("description", "")
-            desc_part = f"\n      {desc}" if desc else ""
-            lines.append(f"    • {s['name']}{desc_part}")
+            if desc:
+                # Truncate long descriptions for mobile readability
+                if len(desc) > 120:
+                    desc = desc[:117] + "..."
+                lines.append(f"└ {desc}")
+            else:
+                lines[-1] = f"└ {s['name']}"
         lines.append("")
 
-    lines.append(
-        f"Found {len(skills_data)} skill{'s' if len(skills_data) != 1 else ''}. "
-        f"Use /skills info <name> to view details."
-    )
+    count = len(skills_data)
+    lines.append(f"{count} skill{'s' if count != 1 else ''} found. /skills info <name> for details.")
     return "\n".join(lines)
 
 

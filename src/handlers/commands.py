@@ -258,22 +258,28 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 content = Path(skill["path"]).read_text(encoding="utf-8").strip()
             except Exception:
                 content = ""
+
+        source_icons = {"project": "📂", "personal": "👤", "plugin": "📦"}
+        source = skill.get("source", "unknown")
+        icon = source_icons.get(source, "📁")
+        enabled = "✅ Enabled" if skill.get("enabled") else "❌ Disabled"
+
         lines = [
             f"🧩 {skill['name']}",
-            f"Source: {skill.get('source', 'unknown')}",
-            f"Enabled: {'Yes' if skill.get('enabled') else 'No'}",
+            f"━━━━━━━━━━━━━━━",
+            f"{icon} Source: {source.capitalize()}",
+            enabled,
         ]
         if skill.get("description"):
             lines.append(f"\n{skill['description']}")
         if content:
-            # Show content without frontmatter
             import re
             content_body = re.sub(r'^---\n.*?\n---\n*', '', content, flags=re.DOTALL).strip()
             if content_body:
                 from src.config import TELEGRAM_MSG_LIMIT
                 if len(content_body) > TELEGRAM_MSG_LIMIT - 300:
                     content_body = content_body[:TELEGRAM_MSG_LIMIT - 300] + "\n... truncated"
-                lines.append(f"\n{content_body}")
+                lines.append(f"\n━━━━━━━━━━━━━━━\n{content_body}")
         await msg.edit_text("\n".join(lines))
 
     elif subcommand == "reload":
