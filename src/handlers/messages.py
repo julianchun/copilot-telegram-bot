@@ -51,18 +51,22 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     if not await check_project_selected(update): return
     
     if service.session_expired:
-        await update.message.reply_text("⚠️ Session expired. Use /start to begin a new session.")
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("⚠️ Session expired. Use /start to begin a new session.")
         return
     
     # Prevent sending while session is busy (feature #5)
     if service._chat_lock.locked():
-        await update.message.reply_text("⏳ Please wait for the current request to finish.")
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("⏳ Please wait for the current request to finish.")
         return
     
     user_text = override_text or (update.message.text if update.message else "") or ""
 
     attachments = None  # SDK-native attachments list
-    attachment = update.message.document or (update.message.photo[-1] if update.message.photo else None)
+    attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None)) if update.message else None
     if attachment:
         try:
             file_obj = await attachment.get_file()
@@ -89,7 +93,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     await service.set_mode(mode)
 
     # Initialize message sender with the user's message chat
-    sender = MessageSender(update.message)
+    sender = MessageSender(update.effective_message)
     await sender.create_working()  # Show "Working..." immediately at the top
     completion_event = asyncio.Event()
     response_chunks: list[str] = []
