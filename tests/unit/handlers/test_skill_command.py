@@ -48,7 +48,7 @@ class TestSkillsList:
         assert "code-review" in text
         assert "greeting" in text
         assert "3 skills found" in text
-        assert "/skills info" in text
+        assert "/skills reload" in text
 
     async def test_list_explicit(self, mock_update, mock_context, mock_service):
         """Explicit /skills list subcommand works."""
@@ -232,10 +232,11 @@ class TestSkillUI:
         assert "Available Skills" in text
         assert "📂 Project" in text
         assert "📦 Built-in" in text
-        assert "┌ code-review" in text
-        assert "┌ greeting" in text
+        assert "code-review" in text
+        assert "greeting" in text
         assert "3 skills found" in text
         assert "/skills info" in text
+        assert "/skills reload" in text
 
     def test_format_skill_list_empty(self):
         from src.ui.menus import format_skill_list

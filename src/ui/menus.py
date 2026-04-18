@@ -75,19 +75,18 @@ def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
         icon = source_icons.get(label, "📁")
         lines.append(f"{icon} {label}")
         for s in skills:
-            lines.append(f"┌ {s['name']}")
             desc = s.get("description", "")
             if desc:
-                # Truncate long descriptions for mobile readability
                 if len(desc) > 120:
                     desc = desc[:117] + "..."
-                lines.append(f"└ {desc}")
+                lines.append(f"  {s['name']}\n  {desc}")
             else:
-                lines[-1] = f"└ {s['name']}"
+                lines.append(f"  {s['name']}")
         lines.append("")
 
     count = len(skills_data)
-    lines.append(f"{count} skill{'s' if count != 1 else ''} found. /skills info <name> for details.")
+    lines.append(f"{count} skill{'s' if count != 1 else ''} found.")
+    lines.append("/skills info <name> · /skills reload")
     return "\n".join(lines)
 
 

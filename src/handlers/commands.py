@@ -276,11 +276,14 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import re
             content_body = re.sub(r'^---\n.*?\n---\n*', '', content, flags=re.DOTALL).strip()
             if content_body:
-                from src.config import TELEGRAM_MSG_LIMIT
-                if len(content_body) > TELEGRAM_MSG_LIMIT - 300:
-                    content_body = content_body[:TELEGRAM_MSG_LIMIT - 300] + "\n... truncated"
-                lines.append(f"\n━━━━━━━━━━━━━━━\n{content_body}")
-        await msg.edit_text("\n".join(lines))
+                lines.append(f"\n━━━━━━━━━━━━━━━")
+                lines.append(content_body)
+
+        result = "\n".join(lines)
+        from src.config import TELEGRAM_MSG_LIMIT
+        if len(result) > TELEGRAM_MSG_LIMIT:
+            result = result[:TELEGRAM_MSG_LIMIT - 20] + "\n... truncated"
+        await msg.edit_text(result)
 
     elif subcommand == "reload":
         msg = await update.message.reply_text("🔄 Reloading skills...")
