@@ -152,43 +152,6 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
-async def _handle_skill_callback(query, context):
-    """Handle skill: callback queries — toggle a skill and refresh the list."""
-    from src.ui.menus import get_skill_keyboard, format_skill_list
-    skill_name = query.data.split(":", 1)[1]
-
-    # Get current state to determine toggle direction
-    skills = await service.list_skills()
-    current = next((s for s in skills if s["name"] == skill_name), None)
-    if not current:
-        await query.edit_message_text(f"⚠️ Skill '{skill_name}' not found.")
-        return
-
-    new_state = not current["enabled"]
-    success = await service.toggle_skill(skill_name, enable=new_state)
-    if not success:
-        await query.edit_message_text(f"⚠️ Failed to toggle skill '{skill_name}'.")
-        return
-
-    # Refresh the full list and update the message in-place
-    skills = await service.list_skills()
-    text = format_skill_list(skills)
-    keyboard = get_skill_keyboard(skills)
-    await query.edit_message_text(text, reply_markup=keyboard)
-
-
-async def _handle_skill_reload_callback(query, context):
-    """Handle skill_reload callback — reload skills from disk and refresh."""
-    from src.ui.menus import get_skill_keyboard, format_skill_list
-    await service.reload_skills()
-    skills = await service.list_skills()
-    text = format_skill_list(skills)
-    if skills:
-        keyboard = get_skill_keyboard(skills)
-        await query.edit_message_text(text, reply_markup=keyboard)
-    else:
-        await query.edit_message_text(text)
-
 
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
@@ -289,10 +252,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):
             await _handle_reasoning_callback(query, context)
-        elif data.startswith("skill:"):
-            await _handle_skill_callback(query, context)
-        elif data == "skill_reload":
-            await _handle_skill_reload_callback(query, context)
         elif data.startswith("instr:"):
             await _handle_instructions_callback(query, update, context)
         elif data.startswith("proj_granted:"):

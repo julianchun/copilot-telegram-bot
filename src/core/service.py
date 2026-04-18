@@ -283,7 +283,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Skills ────────────────────────────────────────────────────────
 
-    async def list_skills(self) -> List[Dict[str, str]]:
+    async def list_skills(self) -> List[Dict[str, Any]]:
         """Fetch available skills from the SDK session."""
         if not self.session:
             return []
@@ -295,34 +295,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
                     "description": s.description,
                     "enabled": s.enabled,
                     "source": s.source,
+                    "path": s.path,
                 }
                 for s in result.skills
             ]
         except Exception as e:
             logger.error(f"Failed to list skills: {e}")
             return []
-
-    async def toggle_skill(self, skill_name: str, enable: bool) -> bool:
-        """Enable or disable a skill by name. Returns True on success."""
-        if not self.session:
-            return False
-        try:
-            from copilot.generated.rpc import (
-                SessionSkillsEnableParams,
-                SessionSkillsDisableParams,
-            )
-            if enable:
-                await self.session.rpc.skills.enable(
-                    SessionSkillsEnableParams(name=skill_name)
-                )
-            else:
-                await self.session.rpc.skills.disable(
-                    SessionSkillsDisableParams(name=skill_name)
-                )
-            return True
-        except Exception as e:
-            logger.error(f"Failed to toggle skill '{skill_name}': {e}")
-            return False
 
     async def reload_skills(self) -> bool:
         """Reload skills from disk. Returns True on success."""

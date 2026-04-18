@@ -51,29 +51,36 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(buttons)
 
 
-def get_skill_keyboard(skills_data: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
-    """Build inline keyboard for skill toggle. Each button shows ✅/❌ + name."""
-    btns = []
-    for s in skills_data:
-        name = s.get("name", "unknown")
-        icon = "✅" if s.get("enabled") else "❌"
-        btns.append(InlineKeyboardButton(f"{icon} {name}", callback_data=f"skill:{name}"))
-    buttons = _build_button_grid(btns)
-    buttons.append([InlineKeyboardButton("🔄 Reload Skills", callback_data="skill_reload")])
-    return InlineKeyboardMarkup(buttons)
-
-
 def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
-    """Format skills list as a text message."""
+    """Format skills list grouped by source, matching copilot-cli style."""
     if not skills_data:
         return "🧩 No skills found."
-    lines = [f"🧩 Skills ({len(skills_data)} available)\n"]
+
+    # Group skills by source
+    groups: Dict[str, list] = {}
     for s in skills_data:
-        icon = "✅" if s.get("enabled") else "❌"
-        desc = s.get("description", "")
-        desc_part = f" — {desc}" if desc else ""
-        lines.append(f"{icon} {s['name']}{desc_part}")
-    lines.append("\nTap a skill to toggle it on/off.")
+        source = s.get("source", "unknown").capitalize()
+        # Map SDK source names to friendly labels
+        label = {
+            "Project": "Project",
+            "Personal": "Personal",
+            "Plugin": "Built-in",
+        }.get(source, source)
+        groups.setdefault(label, []).append(s)
+
+    lines = ["● Available Skills\n"]
+    for label, skills in groups.items():
+        lines.append(f"  {label}:")
+        for s in skills:
+            desc = s.get("description", "")
+            desc_part = f"\n      {desc}" if desc else ""
+            lines.append(f"    • {s['name']}{desc_part}")
+        lines.append("")
+
+    lines.append(
+        f"Found {len(skills_data)} skill{'s' if len(skills_data) != 1 else ''}. "
+        f"Use /skills info <name> to view details."
+    )
     return "\n".join(lines)
 
 
@@ -102,7 +109,7 @@ def _command_reference() -> str:
         "/edit - Standard Chat/Coding mode\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
-        "/skill - View & toggle skills\n"
+        "/skills - List & inspect available skills\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"

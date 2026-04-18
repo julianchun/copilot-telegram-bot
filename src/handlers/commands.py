@@ -225,18 +225,72 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_model_keyboard(await service.get_available_models())
     await msg.edit_text(f"Select a model:", reply_markup=keyboard)
 
-async def skill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /skills command with subcommands: list (default), info <name>, reload."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.ui.menus import get_skill_keyboard, format_skill_list
-    msg = await update.message.reply_text("🔄 Fetching skills...")
-    skills = await service.list_skills()
-    text = format_skill_list(skills)
-    if skills:
-        keyboard = get_skill_keyboard(skills)
-        await msg.edit_text(text, reply_markup=keyboard)
-    else:
+    from src.ui.menus import format_skill_list
+
+    args = context.args or []
+    subcommand = args[0].lower() if args else "list"
+
+    if subcommand == "list":
+        msg = await update.message.reply_text("🔄 Fetching skills...")
+        skills = await service.list_skills()
+        text = format_skill_list(skills)
         await msg.edit_text(text)
+
+    elif subcommand == "info":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /skills info <name>")
+            return
+        skill_name = args[1]
+        msg = await update.message.reply_text(f"🔄 Fetching skill info...")
+        skills = await service.list_skills()
+        skill = next((s for s in skills if s["name"] == skill_name), None)
+        if not skill:
+            await msg.edit_text(f"⚠️ Skill '{skill_name}' not found.")
+            return
+        # Read SKILL.md content if path is available
+        content = ""
+        if skill.get("path"):
+            try:
+                content = Path(skill["path"]).read_text(encoding="utf-8").strip()
+            except Exception:
+                content = ""
+        lines = [
+            f"🧩 {skill['name']}",
+            f"Source: {skill.get('source', 'unknown')}",
+            f"Enabled: {'Yes' if skill.get('enabled') else 'No'}",
+        ]
+        if skill.get("description"):
+            lines.append(f"\n{skill['description']}")
+        if content:
+            # Show content without frontmatter
+            import re
+            content_body = re.sub(r'^---\n.*?\n---\n*', '', content, flags=re.DOTALL).strip()
+            if content_body:
+                from src.config import TELEGRAM_MSG_LIMIT
+                if len(content_body) > TELEGRAM_MSG_LIMIT - 300:
+                    content_body = content_body[:TELEGRAM_MSG_LIMIT - 300] + "\n... truncated"
+                lines.append(f"\n{content_body}")
+        await msg.edit_text("\n".join(lines))
+
+    elif subcommand == "reload":
+        msg = await update.message.reply_text("🔄 Reloading skills...")
+        success = await service.reload_skills()
+        if success:
+            skills = await service.list_skills()
+            text = format_skill_list(skills)
+            await msg.edit_text(f"✅ Skills reloaded.\n\n{text}")
+        else:
+            await msg.edit_text("⚠️ Failed to reload skills.")
+
+    else:
+        await update.message.reply_text(
+            "Unknown subcommand.\n"
+            "Usage: /skills [list|info <name>|reload]"
+        )
 
 async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
