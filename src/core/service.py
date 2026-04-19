@@ -86,6 +86,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
         self._chat_lock = asyncio.Lock()
         self._cancelled = False  # Set by /cancel to signal abort to chat_handler
+        self.allow_all_tools: bool = False  # /allowall toggle
 
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
@@ -279,6 +280,39 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_git_info(self) -> str:
         """Get git info — delegates to core.git module."""
         return await _get_git_info(self.session_info.branch, self.session_info.cwd)
+
+    # ── Skills ────────────────────────────────────────────────────────
+
+    async def list_skills(self) -> List[Dict[str, Any]]:
+        """Fetch available skills from the SDK session."""
+        if not self.session:
+            return []
+        try:
+            result = await self.session.rpc.skills.list()
+            return [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "enabled": s.enabled,
+                    "source": s.source,
+                    "path": s.path,
+                }
+                for s in result.skills
+            ]
+        except Exception as e:
+            logger.error(f"Failed to list skills: {e}")
+            return []
+
+    async def reload_skills(self) -> bool:
+        """Reload skills from disk. Returns True on success."""
+        if not self.session:
+            return False
+        try:
+            await self.session.rpc.skills.reload()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reload skills: {e}")
+            return False
 
     # ── Models ────────────────────────────────────────────────────────
 

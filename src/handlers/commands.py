@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from pathlib import Path
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -224,6 +225,81 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = get_model_keyboard(await service.get_available_models())
     await msg.edit_text(f"Select a model:", reply_markup=keyboard)
 
+async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /skills command with subcommands: list (default), info <name>, reload."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.ui.menus import format_skill_list, get_skill_source_display
+
+    args = context.args or []
+    subcommand = args[0].lower() if args else "list"
+
+    if subcommand == "list":
+        msg = await update.message.reply_text("🔄 Fetching skills...")
+        skills = await service.list_skills()
+        text = format_skill_list(skills)
+        await msg.edit_text(text)
+
+    elif subcommand == "info":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /skills info <name>")
+            return
+        skill_name = args[1]
+        msg = await update.message.reply_text(f"🔄 Fetching skill info...")
+        skills = await service.list_skills()
+        skill = next((s for s in skills if s["name"] == skill_name), None)
+        if not skill:
+            await msg.edit_text(f"⚠️ Skill '{skill_name}' not found.")
+            return
+        # Read SKILL.md content if path is available
+        content = ""
+        if skill.get("path"):
+            try:
+                content = Path(skill["path"]).read_text(encoding="utf-8").strip()
+            except Exception:
+                content = ""
+
+        source = skill.get("source", "unknown")
+        source_label, icon = get_skill_source_display(source)
+        enabled = "✅ Enabled" if skill.get("enabled") else "❌ Disabled"
+
+        lines = [
+            f"🧩 {skill['name']}",
+            f"━━━━━━━━━━━━━━━",
+            f"{icon} Source: {source_label}",
+            enabled,
+        ]
+        if skill.get("description"):
+            lines.append(f"\n{skill['description']}")
+        if content:
+            import re
+            content_body = re.sub(r'^---\n.*?\n---\n*', '', content, flags=re.DOTALL).strip()
+            if content_body:
+                lines.append(f"\n━━━━━━━━━━━━━━━")
+                lines.append(content_body)
+
+        result = "\n".join(lines)
+        from src.config import TELEGRAM_MSG_LIMIT
+        if len(result) > TELEGRAM_MSG_LIMIT:
+            result = result[:TELEGRAM_MSG_LIMIT - 20] + "\n... truncated"
+        await msg.edit_text(result)
+
+    elif subcommand == "reload":
+        msg = await update.message.reply_text("🔄 Reloading skills...")
+        success = await service.reload_skills()
+        if success:
+            skills = await service.list_skills()
+            text = format_skill_list(skills)
+            await msg.edit_text(f"✅ Skills reloaded.\n\n{text}")
+        else:
+            await msg.edit_text("⚠️ Failed to reload skills.")
+
+    else:
+        await update.message.reply_text(
+            "Unknown subcommand.\n"
+            "Usage: /skills [list|info <name>|reload]"
+        )
+
 async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
@@ -307,3 +383,107 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Health check — works without project selection."""
+    if not await security_check(update): return
+
+    client_ok = service._is_running
+    session_ok = service.session is not None and not service.session_expired
+
+    lines = [
+        "🏓 Pong!",
+        f"• Client: {'🟢 Running' if client_ok else '🔴 Not running'}",
+        f"• Session: {'🟢 Active' if session_ok else '🔴 None'}",
+    ]
+
+    # RPC health check (only if session exists)
+    if session_ok:
+        try:
+            t0 = time.monotonic()
+            await service.session.rpc.model.get_current()
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            lines.append(f"• RPC: 🟢 OK ({latency_ms}ms)")
+        except Exception as e:
+            lines.append(f"• RPC: 🔴 Error ({e})")
+
+    await update.message.reply_text("\n".join(lines))
+
+async def allowall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle auto-approve for all tool permissions."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    service.allow_all_tools = not service.allow_all_tools
+
+    if service.allow_all_tools:
+        await update.message.reply_text(
+            "🔓 Allow All: ON\n"
+            "All tool permissions auto-approved for this session."
+        )
+    else:
+        await update.message.reply_text(
+            "🔒 Allow All: OFF\n"
+            "Non-allowlisted tools will require approval."
+        )
+
+async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show custom instructions status with inline action buttons."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+    content = ""
+    try:
+        if instructions_path.exists():
+            content = instructions_path.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        logger.error(f"Failed to read instructions file: {e}")
+        await update.message.reply_text(f"⚠️ Failed to read custom instructions: {e}")
+        return
+
+    has_instructions = bool(content)
+
+    from src.ui.menus import get_instructions_keyboard
+    if has_instructions:
+        try:
+            size = instructions_path.stat().st_size
+        except OSError as e:
+            logger.error(f"Failed to stat instructions file: {e}")
+            await update.message.reply_text(f"⚠️ Failed to inspect custom instructions: {e}")
+            return
+        text = (
+            f"📋 Custom Instructions\n"
+            f"Status: ✅ Active\n"
+            f"File: .github/copilot-instructions.md ({size} bytes)"
+        )
+    else:
+        text = "📋 No custom instructions found."
+
+    keyboard = get_instructions_keyboard(has_instructions=bool(has_instructions))
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+async def init_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate .github/copilot-instructions.md by analyzing the project."""
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+
+    instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+    if instructions_path.exists():
+        content = instructions_path.read_text(encoding="utf-8").strip()
+        if content:
+            await update.message.reply_text(
+                "📋 Custom instructions already exist.\n"
+                "Use /instructions to view or clear them first."
+            )
+            return
+
+    await update.message.reply_text("🔍 Analyzing project to generate custom instructions...")
+    prompt = (
+        "Analyze this project's structure, tech stack, conventions, and patterns. "
+        "Then create a .github/copilot-instructions.md file with concise, actionable instructions "
+        "that will help Copilot understand this project. Include: language/framework, "
+        "coding conventions, build/test commands, project structure overview, "
+        "and any important patterns. Keep it focused and under 50 lines."
+    )
+    await chat_handler(update, context, override_text=prompt)
