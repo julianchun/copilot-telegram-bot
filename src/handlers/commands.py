@@ -148,6 +148,31 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
 
+async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    
+    args = context.args
+    if args:
+        # /autopilot <prompt> — force autopilot mode and send prompt
+        if not await service.set_mode("autopilot"):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
+        prompt = " ".join(args)
+        await update.message.reply_text("🚀 Autopilot Mode ON")
+        await chat_handler(update, context, override_text=prompt)
+    else:
+        # /autopilot — toggle autopilot mode
+        is_autopilot = service.current_mode == "autopilot"
+        target = "interactive" if is_autopilot else "autopilot"
+        if not await service.set_mode(target):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
+        if target == "autopilot":
+            await update.message.reply_text("🚀 Switch to Autopilot Mode")
+        else:
+            await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
+
 async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View and select custom agents.
 

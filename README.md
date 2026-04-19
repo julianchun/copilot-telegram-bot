@@ -13,9 +13,10 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 
 ## ✨ Key Features
 
-### 🤖 Dual Operation Modes
-- **📝 Plan Mode (Architecture):** Activates a custom **planner agent** via the SDK's agent RPC API. The agent is configured to brainstorm architecture, plan features, and outline project structures—without writing code. Switching modes preserves session context and conversation history.
-- **💬 Edit Mode (Development):** The default Copilot experience—no agent selected. Write code, debug errors, run tests, and execute terminal commands directly from chat.
+### 🤖 Triple Operation Modes
+- **💬 Edit Mode (Development):** The default Copilot experience. Write code, debug errors, run tests, and execute terminal commands directly from chat.
+- **📝 Plan Mode (Architecture):** Configured to brainstorm architecture, plan features, and outline project structures—without writing code.
+- **🚀 Autopilot Mode (Autonomous):** Highly autonomous mode where Copilot takes the initiative to execute plans, install dependencies, and run tests. Best paired with `/allowall` to remove permission prompts. Switching between these three modes preserves session context and conversation history.
 
 ### 📱 Mobile-First UX
 Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:
@@ -172,6 +173,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/help` | Show context-aware help with live status indicators. |
 | `/ping` | Run a quick health check for bot, session, and SDK RPC state. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
+| `/autopilot` | Toggle **Autopilot Mode**. (Autonomous execution). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. Conversation history is preserved. |
 | `/context` | Display model context and token usage info. |

@@ -14,7 +14,7 @@ from src.config import TELEGRAM_BOT_TOKEN, ALLOWED_USER_ID
 from src.core.service import service
 from src.handlers.commands import (
     start_command, help_command, edit_command, clear_command, 
-    usage_command, plan_command, cwd_command, ls_command, 
+    usage_command, plan_command, autopilot_command, cwd_command, ls_command, 
     context_command,
     model_command, skills_command, share_command, cancel_command,
     session_command, agent_command,
@@ -38,6 +38,7 @@ async def setup_bot_commands(application):
         BotCommand("start", "Open project selection menu"),
         BotCommand("help", "Show help manual"),
         BotCommand("plan", "Architecture & Planning mode"),
+        BotCommand("autopilot", "Autonomous execution mode"),
         BotCommand("edit", "Standard Chat/Coding mode"),
         BotCommand("agent", "View and select custom agents"),
         BotCommand("model", "Switch AI Model"),
@@ -129,6 +130,7 @@ def main():
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("usage", usage_command))
     app.add_handler(CommandHandler("plan", plan_command))
+    app.add_handler(CommandHandler("autopilot", autopilot_command))
     app.add_handler(CommandHandler("agent", agent_command))
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("ls", ls_command))

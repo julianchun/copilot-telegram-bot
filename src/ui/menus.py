@@ -120,6 +120,7 @@ def _command_reference() -> str:
         "/help - Show help manual\n\n"
         "Core Workflow\n"
         "/plan - Architecture & Planning mode\n"
+        "/autopilot - Autonomous execution mode\n"
         "/edit - Standard Chat/Coding mode\n"
         "/agent - View and select custom agents\n\n"
         "Session Control\n"
