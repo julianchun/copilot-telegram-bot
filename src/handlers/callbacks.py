@@ -160,11 +160,16 @@ async def _handle_agent_callback(query, context):
     if name == "__reload__":
         agents = await service.reload_agents()
         current = await service.get_current_agent()
-        if agents:
-            keyboard = get_agent_keyboard(agents, current)
-            await query.edit_message_text("🔄 Agents reloaded. Select an agent:", reply_markup=keyboard)
-        else:
-            await query.edit_message_text("🔄 Agents reloaded. No custom agents found.")
+        try:
+            from telegram.error import BadRequest
+            if agents:
+                keyboard = get_agent_keyboard(agents, current)
+                await query.edit_message_text("🔄 Agents reloaded. Select an agent:", reply_markup=keyboard)
+            else:
+                await query.edit_message_text("🔄 Agents reloaded. No custom agents found.")
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Failed to edit agent menu: {e}")
         return
 
     if name == "__default__":
