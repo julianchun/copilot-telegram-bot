@@ -22,6 +22,7 @@ Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequ
 - **Project Switcher:** Instantly switch between defined projects in your workspace via `/start`.
 - **Interactive Permissions:** "Allow" or "Deny" tool execution (e.g., file writes, shell commands) with a single tap.
 - **Smart Options:** When the model asks for clarification, reply via multiple-choice buttons.
+- **Instructions Actions:** Inspect, clear, or generate `.github/copilot-instructions.md` from `/instructions` without retyping prompts.
 
 ### 👁️ Support Multimodal Vision
 Don't just tell Copilot about the bug—**show it**.
@@ -169,17 +170,31 @@ After selecting a project, a **cockpit message** appears with:
 | :--- | :--- |
 | `/start` | Open the main dashboard and project selector. |
 | `/help` | Show context-aware help with live status indicators. |
+| `/ping` | Run a quick health check for bot, session, and SDK RPC state. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. Conversation history is preserved. |
 | `/context` | Display model context and token usage info. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/session` | Show session info and workspace summary. |
+| `/allowall` | Toggle auto-approval for tool permission prompts in the current session. |
+| `/instructions` | Show custom instruction status and inline actions for view, clear, and generate. |
+| `/init` | Ask Copilot to generate `.github/copilot-instructions.md` for the active project. |
+| `/skills` | List skills, inspect a skill, or reload skills from registered skill roots. |
 | `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
 | `/clear` | Reset conversation memory. |
 | `/ls` | List files in current directory. |
 | `/cwd` | Show current working directory. |
+
+### Custom Instructions
+- `/instructions` opens an inline menu for project-level custom instructions stored at `.github/copilot-instructions.md`.
+- `Generate` reuses the normal chat pipeline, so permission prompts and follow-up choices work from callback queries as well as slash commands.
+- `Clear` removes the file and recreates the session so the absence of instructions applies immediately.
+
+### Skills
+- The bot loads skills from its built-in `skills/` directory plus project roots at `.github/skills` and `skills/`.
+- `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
 
 ## 🔧 Under the Hood
 This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
@@ -187,7 +202,7 @@ This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a
 - **Custom Agent Mode Switching:** Plan/Edit modes are implemented as SDK custom agents. The `planner` agent is registered at session creation and toggled via `session.rpc.agent.select()`/`deselect()` — preserving conversation history across mode switches.
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
-- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. Read-only tools (`list_files`, `read_file`) use `skip_permission=True` for zero-friction access.
+- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
 
 ## ⚡ How Permissions Work
 
@@ -238,8 +253,8 @@ Three-layer, event-driven design under [src/](src/):
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
 - **[src/handlers/](src/handlers/)** — Telegram Handlers:
-  - **[commands.py](src/handlers/commands.py)**: All 13 bot commands (`/start`, `/help`, `/plan`, `/model`, `/cancel`, etc.).
-  - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
+  - **[commands.py](src/handlers/commands.py)**: Bot commands including session controls, health checks, instructions actions, and skill reload/list commands.
+  - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements the interaction callback and callback-safe reply flow for permission prompts and model questions.
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
 - **[src/ui/](src/ui/)** — Output & Formatting:
