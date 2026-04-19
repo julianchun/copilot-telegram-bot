@@ -45,8 +45,8 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     
     If `query` is provided (CallbackQuery), edits the original start message to remove the keyboard.
     """
-    context.user_data['plan_mode'] = False
-    await service.set_mode("general")
+    await service.set_mode("interactive")
+    await service.deselect_agent()
     await service.set_working_directory(str(path))
 
     # Edit the start message to remove inline keyboard and show final status
@@ -152,6 +152,39 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
+async def _handle_agent_callback(query, context):
+    """Handle agent: callback queries (agent selection keyboard)."""
+    from src.ui.menus import get_agent_keyboard
+    name = query.data.split(":", 1)[1]
+
+    if name == "__reload__":
+        agents = await service.reload_agents()
+        current = await service.get_current_agent()
+        try:
+            from telegram.error import BadRequest
+            if agents:
+                keyboard = get_agent_keyboard(agents, current)
+                await query.edit_message_text("🔄 Agents reloaded. Select an agent:", reply_markup=keyboard)
+            else:
+                await query.edit_message_text("🔄 Agents reloaded. No custom agents found.")
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Failed to edit agent menu: {e}")
+        return
+
+    if name == "__default__":
+        if await service.deselect_agent():
+            await query.edit_message_text("🤖 Switched to default (no agent)")
+        else:
+            await query.edit_message_text("⚠️ Failed to deselect agent")
+        return
+
+    if await service.select_agent(name):
+        await query.edit_message_text(f"🤖 Agent selected: {name}")
+    else:
+        await query.edit_message_text(f"⚠️ Failed to select agent: {name}")
+
+
 
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
@@ -248,6 +281,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("perm:") or data.startswith("input:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("agent:"):
+            await _handle_agent_callback(query, context)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):

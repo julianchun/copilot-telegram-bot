@@ -93,7 +93,8 @@ def mock_service():
     svc.session = MagicMock()
     svc.session_id = "test-1234"
     svc.current_model = "gpt-4.1"
-    svc.current_mode = "general"
+    svc.current_mode = "interactive"
+    svc.current_agent = None
     svc._is_running = True
     svc.session_expired = False
 
@@ -102,7 +103,12 @@ def mock_service():
     svc.stop = AsyncMock()
     svc.reset_session = AsyncMock()
     svc.change_model = AsyncMock()
-    svc.set_mode = AsyncMock()
+    svc.set_mode = AsyncMock(return_value=True)
+    svc.list_agents = AsyncMock(return_value=[])
+    svc.get_current_agent = AsyncMock(return_value=None)
+    svc.select_agent = AsyncMock(return_value=True)
+    svc.deselect_agent = AsyncMock(return_value=True)
+    svc.reload_agents = AsyncMock(return_value=[])
     svc.get_usage_report = AsyncMock(return_value="usage report")
     svc.get_session_info = MagicMock()
     svc.get_working_directory = MagicMock(return_value="/tmp/workspace")

@@ -92,8 +92,8 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    context.user_data['plan_mode'] = False
-    await service.set_mode("general")
+    await service.set_mode("interactive")
+    await service.deselect_agent()
     await service.reset_session()
     await update.message.reply_text("🧹 Session Cleared\nMemory reset.")
 
@@ -117,10 +117,9 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def edit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    if not await service.set_mode("general"):
+    if not await service.set_mode("interactive"):
         await update.message.reply_text("⏳ Please wait — a request is in progress.")
         return
-    context.user_data['plan_mode'] = False
     logger.info("Switched to Edit Mode")
     await update.message.reply_text("💬 Switched to Edit (Chat) Mode")
 
@@ -134,21 +133,95 @@ async def plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await service.set_mode("plan"):
             await update.message.reply_text("⏳ Please wait — a request is in progress.")
             return
-        context.user_data['plan_mode'] = True
         prompt = " ".join(args)
         await update.message.reply_text("📝 Plan Mode ON")
         await chat_handler(update, context, override_text=prompt)
     else:
         # /plan — toggle plan mode
-        target = not context.user_data.get('plan_mode', False)
-        if not await service.set_mode("plan" if target else "general"):
+        is_plan = service.current_mode == "plan"
+        target = "interactive" if is_plan else "plan"
+        if not await service.set_mode(target):
             await update.message.reply_text("⏳ Please wait — a request is in progress.")
             return
-        context.user_data['plan_mode'] = target
-        if target:
+        if target == "plan":
             await update.message.reply_text("📝 Switch to Plan Mode")
         else:
             await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
+
+async def autopilot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    
+    args = context.args
+    if args:
+        # /autopilot <prompt> — force autopilot mode and send prompt
+        if not await service.set_mode("autopilot"):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
+        prompt = " ".join(args)
+        await update.message.reply_text("🚀 Autopilot Mode ON")
+        await chat_handler(update, context, override_text=prompt)
+    else:
+        # /autopilot — toggle autopilot mode
+        is_autopilot = service.current_mode == "autopilot"
+        target = "interactive" if is_autopilot else "autopilot"
+        if not await service.set_mode(target):
+            await update.message.reply_text("⏳ Please wait — a request is in progress.")
+            return
+        if target == "autopilot":
+            await update.message.reply_text("🚀 Switch to Autopilot Mode")
+        else:
+            await update.message.reply_text("💬 Switch to Edit (Chat) Mode")
+
+async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View and select custom agents.
+
+    /agent          — show agent list with inline keyboard
+    /agent <name>   — select agent by name
+    /agent reload   — reload agent definitions from disk
+    """
+    if not await security_check(update): return
+    if not await check_project_selected(update): return
+    from src.ui.menus import get_agent_keyboard
+
+    args = context.args
+    if args:
+        subcommand = args[0].lower()
+        if subcommand == "reload":
+            agents = await service.reload_agents()
+            if agents:
+                names = ", ".join(
+                    (a.display_name if hasattr(a, "display_name") else a.get("display_name", ""))
+                    or (a.name if hasattr(a, "name") else a.get("name", "?"))
+                    for a in agents
+                )
+                await update.message.reply_text(f"🔄 Agents reloaded ({len(agents)}):\n{names}")
+            else:
+                await update.message.reply_text("🔄 Agents reloaded. No custom agents found.")
+            return
+
+        # /agent <name> — select directly
+        name = " ".join(args)
+        if await service.select_agent(name):
+            await update.message.reply_text(f"🤖 Agent selected: {name}")
+        else:
+            await update.message.reply_text(f"⚠️ Failed to select agent: {name}")
+        return
+
+    # /agent (no args) — show keyboard
+    agents = await service.list_agents()
+    current = await service.get_current_agent()
+    if not agents:
+        await update.message.reply_text(
+            "🤖 No custom agents found.\n\n"
+            "Define agents in:\n"
+            "• .github/agents/<name>.agent.md (project)\n"
+            "• ~/.copilot/agents/<name>.agent.md (user)\n\n"
+            "Then run /agent reload"
+        )
+        return
+    keyboard = get_agent_keyboard(agents, current)
+    await update.message.reply_text("🤖 Select an agent:", reply_markup=keyboard)
 
 async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -332,7 +405,8 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime_str = session_info.duration()
 
     model = service.user_selected_model or service.current_model or "Auto"
-    mode = "Planning" if service.current_mode == "plan" else "Chat"
+    mode_labels = {"interactive": "Chat", "plan": "Planning", "autopilot": "Autopilot"}
+    mode = mode_labels.get(service.current_mode, "Chat")
     status = "Expired" if service.session_expired else "Active"
     
     # Full session ID from session_info
@@ -347,6 +421,8 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_requests = sum(u.requests for u in tracker.model_usage.values())
 
+    agent_line = f"• Agent: {service.current_agent}\n" if service.current_agent else ""
+
     msg = (
         f"📋 Session Info\n"
         f"• Session ID: {session_id_full}\n"
@@ -355,6 +431,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Created: {created_str}\n"
         f"• Model: {model}\n"
         f"• Mode: {mode}\n"
+        f"{agent_line}"
         f"• Total Requests: {total_requests}\n"
         f"📂 Workspace\n"
         f"• Project: {service.project_name or Path(cwd).name}\n"

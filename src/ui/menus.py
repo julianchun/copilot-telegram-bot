@@ -120,7 +120,9 @@ def _command_reference() -> str:
         "/help - Show help manual\n\n"
         "Core Workflow\n"
         "/plan - Architecture & Planning mode\n"
-        "/edit - Standard Chat/Coding mode\n\n"
+        "/autopilot - Autonomous execution mode\n"
+        "/edit - Standard Chat/Coding mode\n"
+        "/agent - View and select custom agents\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
         "/skills - List & inspect available skills\n"
@@ -161,13 +163,16 @@ def get_cockpit_content(
     branch: str,
     file_count: int,
     folder_count: int,
+    agent: str | None = None,
 ) -> str:
     """Cockpit message sent after project selection — stats + commands."""
     branch_line = f"🔀 Branch: {branch}\n" if branch else ""
+    agent_line = f"🤖 Agent: {agent}\n" if agent else ""
     return (
         f"✅ Project Loaded: {project_name}\n\n"
         f"🤖 Model: {model}\n"
         f"⚙️ Mode: {mode}\n"
+        f"{agent_line}"
         f"📂 Path: {path}\n"
         f"{branch_line}"
         f"📊 Stats: {file_count} files · {folder_count} folders\n\n"
@@ -212,4 +217,28 @@ def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effor
     buttons = _build_button_grid(btns)
     # Add skip button to use default
     buttons.append([InlineKeyboardButton("Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def get_agent_keyboard(agents: list, current_agent: str | None = None) -> InlineKeyboardMarkup:
+    """Build inline keyboard for agent selection.
+
+    Each agent shows its display_name (or name) with ✅ if currently active.
+    A "Default (No Agent)" option at top deselects any active agent.
+    """
+    default_label = "Default (No Agent)"
+    if current_agent is None:
+        default_label += " ✅"
+    btns = [InlineKeyboardButton(default_label, callback_data="agent:__default__")]
+
+    for agent in agents:
+        name = agent.name if hasattr(agent, "name") else agent.get("name", "unknown")
+        display = agent.display_name if hasattr(agent, "display_name") else agent.get("display_name", name)
+        label = display or name
+        if name == current_agent:
+            label += " ✅"
+        btns.append(InlineKeyboardButton(label, callback_data=f"agent:{name}"))
+
+    buttons = _build_button_grid(btns, columns=1)
+    buttons.append([InlineKeyboardButton("🔄 Reload Agents", callback_data="agent:__reload__")])
     return InlineKeyboardMarkup(buttons)

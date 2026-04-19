@@ -1,5 +1,11 @@
-"""Custom agent definitions for mode switching."""
+"""Custom agent definitions — DEPRECATED.
 
+Plan mode is now handled via native SDK Mode API (session.rpc.mode.set).
+Custom agents are loaded from .agent.md files and managed via Agent API.
+This module is kept only for backward compatibility during transition.
+"""
+
+# Legacy — no longer imported anywhere. Safe to remove in a future cleanup.
 PLANNER_AGENT_NAME = "planner"
 
 PLANNER_AGENT: dict = {

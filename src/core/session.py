@@ -219,20 +219,36 @@ class SessionMixin:
         """Create and configure a new Copilot SDK session."""
         from pathlib import Path
         from src.core.tools import list_files, read_file
-        from src.core.agents import PLANNER_AGENT
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
 
-        # Build skill directories: bot-level + project-level
-        bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
-        skill_dirs = [bot_skills_dir]
+        # Build skill directories: bot-level + global + project-level
+        skill_dirs = []
+        
+        bot_skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+        if bot_skills_dir.exists():
+            skill_dirs.append(str(bot_skills_dir))
+        
+        home_dir = Path.home()
+        for global_candidate in [
+            home_dir / ".copilot" / "skills",
+            home_dir / ".claude" / "skills",
+            home_dir / ".agents" / "skills",
+        ]:
+            if global_candidate.exists():
+                skill_dirs.append(str(global_candidate))
+
         if ctx.root_path:
             project_root = Path(ctx.root_path)
             for candidate in [
                 project_root / ".github" / "skills",
+                project_root / ".claude" / "skills",
+                project_root / ".agents" / "skills",
                 project_root / "skills",
             ]:
+                # Always include project-level candidates so /skills reload
+                # works if the user creates the folder mid-session.
                 skill_dirs.append(str(candidate))
 
         # Preserve order while avoiding duplicate roots.
@@ -264,7 +280,6 @@ class SessionMixin:
                     },
                 },
             },
-            custom_agents=[PLANNER_AGENT],
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
             mcp_servers=MCP_SERVERS,
@@ -289,11 +304,19 @@ class SessionMixin:
             self.usage_tracker.selected_model = self.current_model
         self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
 
-        # If plan mode was active before session creation, select the agent now.
-        # Temporarily reset to force the RPC call in set_mode().
-        if self.current_mode == "plan":
-            self.current_mode = "general"
-            await self.set_mode("plan")
+        # If a non-default mode was active before session creation, re-apply now.
+        if self.current_mode != "interactive":
+            saved_mode = self.current_mode
+            self.current_mode = "interactive"  # reset so set_mode() sees a change
+            if not await self.set_mode(saved_mode):
+                logger.warning(f"Failed to restore mode '{saved_mode}' after session reset")
+
+        # If a custom agent was selected before session creation, re-apply now.
+        if self.current_agent:
+            saved_agent = self.current_agent
+            self.current_agent = None
+            if not await self.select_agent(saved_agent):
+                logger.warning(f"Failed to restore agent '{saved_agent}' after session reset")
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""

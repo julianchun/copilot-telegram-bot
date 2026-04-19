@@ -322,3 +322,57 @@ class TestPermissionBridgeAllowAll:
             {"toolName": "bash", "toolArgs": {"command": "rm -rf /"}}, MagicMock(),
         )
         assert result == {"permissionDecision": "allow"}
+
+
+# ---------------------------------------------------------------------------
+# /autopilot
+# ---------------------------------------------------------------------------
+
+class TestAutopilotCommand:
+    async def test_toggle_on(self, mock_update, mock_context, mock_service):
+        mock_context.args = []
+        mock_service.current_mode = "interactive"
+        mock_service.set_mode.return_value = True
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import autopilot_command
+            await autopilot_command(mock_update, mock_context)
+
+        mock_service.set_mode.assert_awaited_once_with("autopilot")
+        text = mock_update.message.reply_text.call_args[0][0]
+        assert "Autopilot Mode" in text
+
+    async def test_toggle_off(self, mock_update, mock_context, mock_service):
+        mock_context.args = []
+        mock_service.current_mode = "autopilot"
+        mock_service.set_mode.return_value = True
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import autopilot_command
+            await autopilot_command(mock_update, mock_context)
+
+        mock_service.set_mode.assert_awaited_once_with("interactive")
+        text = mock_update.message.reply_text.call_args[0][0]
+        assert "Edit" in text
+
+    async def test_force_on_with_prompt(self, mock_update, mock_context, mock_service):
+        mock_context.args = ["do", "stuff"]
+        mock_service.set_mode.return_value = True
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3], \
+             patch("src.handlers.commands.chat_handler", new_callable=AsyncMock) as mock_chat:
+            from src.handlers.commands import autopilot_command
+            await autopilot_command(mock_update, mock_context)
+
+        mock_service.set_mode.assert_awaited_once_with("autopilot")
+        mock_chat.assert_awaited_once_with(mock_update, mock_context, override_text="do stuff")
+

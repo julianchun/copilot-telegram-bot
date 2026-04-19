@@ -30,8 +30,6 @@ from src.core.session import SessionMixin
 
 logger = logging.getLogger(__name__)
 
-# Import agent definitions from dedicated module (avoids circular imports)
-from src.core.agents import PLANNER_AGENT, PLANNER_AGENT_NAME  # noqa: E402
 
 
 class _RequestWrapper:
@@ -79,7 +77,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._tool_call_names: Dict[str, str] = {}
         self.session_expired: bool = False
         self.session_end_callback: Optional[Callable[[str], Any]] = None
-        self.current_mode: str = "general"  # "general" or "plan"
+        self.current_mode: str = "interactive"  # "interactive", "plan", or "autopilot"
+        self.current_agent: str | None = None  # name of the selected custom agent, or None
 
         # Session info from SDK events (single source of truth)
         self.session_info = SessionInfo()
@@ -317,9 +316,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── Models ────────────────────────────────────────────────────────
 
     async def get_available_models(self) -> List[Dict[str, str]]:
-        if not self._is_running:
-            await self.start()
         try:
+            if not self._is_running:
+                await self.start()
             models = await self.client.list_models()
             results = []
             for m in models:
@@ -381,7 +380,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_project_info_header(self) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if self.current_mode == "plan" else "Chat"
+        mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
+        mode = mode_labels.get(self.current_mode, "Chat")
+        agent_line = f"🤖 Agent: {self.current_agent}\n" if self.current_agent else ""
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch_line = f"🔀 Branch: {git_info[1:]}\n" if git_info else ""
@@ -390,6 +391,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         header = (
             f"🤖 Model: {model}\n"
             f"⚙️ Mode: {mode}\n"
+            f"{agent_line}"
             f"📂 Path: {path_str}\n"
             f"{branch_line}"
             f"📂 Structure:\n{tree}"
@@ -400,7 +402,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
         model = self.user_selected_model or self.current_model or "Auto"
-        mode = "Plan" if self.current_mode == "plan" else "Chat"
+        mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
+        mode = mode_labels.get(self.current_mode, "Chat")
         path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch = git_info[1:] if git_info else ""
@@ -413,6 +416,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             branch=branch,
             file_count=file_count,
             folder_count=folder_count,
+            agent=self.current_agent,
         )
 
     def get_directory_listing(self) -> str:
@@ -426,38 +430,112 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── Mode switching ──────────────────────────────────────────────
 
     async def set_mode(self, mode: str) -> bool:
-        """Switch between 'general' and 'plan' mode via SDK agent RPC.
+        """Switch mode via native SDK Mode RPC.
 
-        - "plan"    → selects the planner custom agent
-        - "general" → deselects any active agent (back to default Copilot)
-
-        Returns True if mode was changed, False otherwise.
+        Valid modes: "interactive", "plan", "autopilot".
+        Returns True on success (including if already in that mode), False otherwise.
         The session and conversation history are preserved across switches.
         """
-        if mode not in ("general", "plan"):
-            logger.warning(f"Ignoring invalid mode {mode!r}; allowed: 'general', 'plan'")
+        valid_modes = ("interactive", "plan", "autopilot")
+        if mode not in valid_modes:
+            logger.warning(f"Ignoring invalid mode {mode!r}; allowed: {valid_modes}")
             return False
         if mode == self.current_mode:
-            return True  # already in desired mode
+            return True
         if self._chat_lock.locked():
             logger.warning("Mode switch skipped — chat request in progress")
             return False
         if not self.session:
-            self.current_mode = mode  # will be applied when session is created
+            self.current_mode = mode
             return True
         try:
-            if mode == "plan":
-                from copilot.generated.rpc import SessionAgentSelectParams
-                await self.session.rpc.agent.select(
-                    SessionAgentSelectParams(name=PLANNER_AGENT_NAME)
-                )
-            else:
-                await self.session.rpc.agent.deselect()
+            from copilot.generated.rpc import SessionModeSetParams, Mode
+            await self.session.rpc.mode.set(
+                SessionModeSetParams(mode=Mode(mode))
+            )
             self.current_mode = mode
             return True
         except Exception as e:
-            logger.warning(f"Agent switch failed (non-fatal): {e}")
+            logger.warning(f"Mode switch failed (non-fatal): {e}")
             return False
+
+    # ── Agent management ─────────────────────────────────────────────
+
+    async def list_agents(self) -> list:
+        """List available custom agents via SDK agent RPC."""
+        try:
+            if not self.session:
+                await self.start()
+            if not self.session:
+                return []
+            result = await self.session.rpc.agent.list()
+            return result.agents or []
+        except Exception as e:
+            logger.error(f"Failed to list agents: {e}")
+            return []
+
+    async def get_current_agent(self) -> str | None:
+        """Get the currently selected custom agent name, or None for default."""
+        if not self.session:
+            return self.current_agent
+        try:
+            result = await self.session.rpc.agent.get_current()
+            if result.agent:
+                self.current_agent = result.agent.name
+                return result.agent.name
+            self.current_agent = None
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get current agent: {e}")
+            return self.current_agent
+
+    async def select_agent(self, name: str) -> bool:
+        """Select a custom agent by name. Returns True on success."""
+        if self._chat_lock.locked():
+            logger.warning("Agent selection skipped — chat request in progress")
+            return False
+        if not self.session:
+            self.current_agent = name
+            return True
+        try:
+            from copilot.generated.rpc import SessionAgentSelectParams
+            await self.session.rpc.agent.select(
+                SessionAgentSelectParams(name=name)
+            )
+            self.current_agent = name
+            return True
+        except Exception as e:
+            logger.warning(f"Agent selection failed: {e}")
+            return False
+
+    async def deselect_agent(self) -> bool:
+        """Deselect any active custom agent (back to default). Returns True on success."""
+        if self._chat_lock.locked():
+            logger.warning("Agent deselection skipped — chat request in progress")
+            return False
+        if not self.session:
+            self.current_agent = None
+            return True
+        try:
+            await self.session.rpc.agent.deselect()
+            self.current_agent = None
+            return True
+        except Exception as e:
+            logger.warning(f"Agent deselection failed: {e}")
+            return False
+
+    async def reload_agents(self) -> list:
+        """Reload custom agent definitions from disk. Returns updated agent list."""
+        try:
+            if not self.session:
+                await self.start()
+            if not self.session:
+                return []
+            result = await self.session.rpc.agent.reload()
+            return result.agents or []
+        except Exception as e:
+            logger.error(f"Failed to reload agents: {e}")
+            return []
 
     # ── Chat ──────────────────────────────────────────────────────────
 
