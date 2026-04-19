@@ -191,12 +191,9 @@ class TestOnSessionEnd:
 # ── _create_session ──────────────────────────────────────────────────
 
 class TestCreateSession:
-    async def test_create_session_registers_existing_project_skill_roots(self, tmp_path):
+    async def test_create_session_registers_project_skill_roots_even_if_missing(self, tmp_path):
         svc = FakeService()
         svc.client.create_session = AsyncMock(return_value=MagicMock())
-
-        (tmp_path / ".github" / "skills").mkdir(parents=True)
-        (tmp_path / "skills").mkdir()
 
         with patch("src.core.session.ctx.root_path", str(tmp_path)):
             await svc._create_session()
@@ -208,9 +205,6 @@ class TestCreateSession:
     async def test_create_session_keeps_skill_directories_unique(self, tmp_path):
         svc = FakeService()
         svc.client.create_session = AsyncMock(return_value=MagicMock())
-
-        (tmp_path / ".github" / "skills").mkdir(parents=True)
-        (tmp_path / "skills").mkdir()
 
         with patch("src.core.session.ctx.root_path", str(tmp_path)):
             await svc._create_session()

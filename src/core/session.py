@@ -247,8 +247,9 @@ class SessionMixin:
                 project_root / ".agents" / "skills",
                 project_root / "skills",
             ]:
-                if candidate.exists():
-                    skill_dirs.append(str(candidate))
+                # Always include project-level candidates so /skills reload
+                # works if the user creates the folder mid-session.
+                skill_dirs.append(str(candidate))
 
         # Preserve order while avoiding duplicate roots.
         skill_dirs = list(dict.fromkeys(skill_dirs))
