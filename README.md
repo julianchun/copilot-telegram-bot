@@ -13,17 +13,17 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 
 ## ✨ Key Features
 
-### 🤖 Triple Operation Modes
-- **💬 Edit Mode (Development):** The default Copilot experience. Write code, debug errors, run tests, and execute terminal commands directly from chat.
-- **📝 Plan Mode (Architecture):** Configured to brainstorm architecture, plan features, and outline project structures—without writing code.
-- **🚀 Autopilot Mode (Autonomous):** Highly autonomous mode where Copilot takes the initiative to execute plans, install dependencies, and run tests. Best paired with `/allowall` to remove permission prompts. Switching between these three modes preserves session context and conversation history.
+### 🤖 Flexible AI Behaviors (Modes, Agents, & Skills)
+- **3 Native Operation Modes:** Switch instantly between **Edit** (coding), **Plan** (architecting), and **Autopilot** (autonomous execution) while preserving your conversation history.
+- **Custom Agents:** Load and switch between specialized agents (`/agent`) tailored for specific tasks, independent of your current mode.
+- **Skills System:** Load reusable prompt modules from `skills/` directories globally or per-project to extend Copilot's capabilities (`/skills`).
+- **Project Instructions:** Native support for `.github/copilot-instructions.md` with inline actions to view, clear, or auto-generate them based on project analysis (`/instructions`).
 
 ### 📱 Mobile-First UX
 Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:
 - **Project Switcher:** Instantly switch between defined projects in your workspace via `/start`.
 - **Interactive Permissions:** "Allow" or "Deny" tool execution (e.g., file writes, shell commands) with a single tap.
 - **Smart Options:** When the model asks for clarification, reply via multiple-choice buttons.
-- **Instructions Actions:** Inspect, clear, or generate `.github/copilot-instructions.md` from `/instructions` without retyping prompts.
 
 ### 👁️ Support Multimodal Vision
 Don't just tell Copilot about the bug—**show it**.
