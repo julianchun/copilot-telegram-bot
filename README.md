@@ -195,7 +195,9 @@ After selecting a project, a **cockpit message** appears with:
 - `Clear` removes the file and recreates the session so the absence of instructions applies immediately.
 
 ### Skills
-- The bot loads skills from its built-in `skills/` directory plus project roots at `.github/skills` and `skills/`.
+- The bot loads skills from the following directories:
+  - **Global/Personal:** `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/`
+  - **Project-specific:** `.github/skills/`, `.claude/skills/`, `.agents/skills/`, and `skills/`
 - `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
 
 ## 🔧 Under the Hood

@@ -223,13 +223,25 @@ class SessionMixin:
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
 
-        # Build skill directories: bot-level + project-level
+        # Build skill directories: bot-level + global + project-level
         bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
         skill_dirs = [bot_skills_dir]
+        
+        home_dir = Path.home()
+        for global_candidate in [
+            home_dir / ".copilot" / "skills",
+            home_dir / ".claude" / "skills",
+            home_dir / ".agents" / "skills",
+        ]:
+            if global_candidate.exists():
+                skill_dirs.append(str(global_candidate))
+
         if ctx.root_path:
             project_root = Path(ctx.root_path)
             for candidate in [
                 project_root / ".github" / "skills",
+                project_root / ".claude" / "skills",
+                project_root / ".agents" / "skills",
                 project_root / "skills",
             ]:
                 skill_dirs.append(str(candidate))
