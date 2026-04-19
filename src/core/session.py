@@ -110,6 +110,7 @@ class SessionMixin:
         self._tool_call_names.clear()
         self.last_session_usage = None
         self.last_assistant_usage = None
+        self.allow_all_tools = False
 
         # Reset session info so /session shows fresh data
         self.session_info = SessionInfo()
@@ -216,10 +217,25 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
+        from pathlib import Path
         from src.core.tools import list_files, read_file
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
+
+        # Build skill directories: bot-level + project-level
+        bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
+        skill_dirs = [bot_skills_dir]
+        if ctx.root_path:
+            project_root = Path(ctx.root_path)
+            for candidate in [
+                project_root / ".github" / "skills",
+                project_root / "skills",
+            ]:
+                skill_dirs.append(str(candidate))
+
+        # Preserve order while avoiding duplicate roots.
+        skill_dirs = list(dict.fromkeys(skill_dirs))
 
         self.session = await self.client.create_session(
             on_permission_request=PermissionHandler.approve_all,
@@ -250,6 +266,7 @@ class SessionMixin:
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
             mcp_servers=MCP_SERVERS,
+            skill_directories=skill_dirs,
         )
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")
@@ -288,6 +305,11 @@ class SessionMixin:
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
         tool_name = input_data.get('toolName', 'unknown')
         tool_args = input_data.get('toolArgs', {})
+
+        # /allowall toggle: auto-approve everything
+        if self.allow_all_tools:
+            logger.info(f"✅ Auto-approved (allow_all mode): {tool_name}")
+            return {"permissionDecision": "allow"}
 
         # Auto-approve tools in allowlist
         if tool_name in _TOOL_ALLOWLIST:

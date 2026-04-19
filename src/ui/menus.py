@@ -50,6 +50,69 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 
+
+def get_skill_source_display(source: str) -> tuple[str, str]:
+    """Return the normalized source label and icon for a skill source."""
+    normalized = (source or "unknown").capitalize()
+    label = {
+        "Project": "Project",
+        "Personal": "Personal",
+        "Plugin": "Built-in",
+    }.get(normalized, normalized)
+    icon = {
+        "Project": "📂",
+        "Personal": "👤",
+        "Built-in": "📦",
+    }.get(label, "📁")
+    return label, icon
+
+
+def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
+    """Format skills list grouped by source, card style for Telegram mobile."""
+    if not skills_data:
+        return "🧩 No skills found."
+
+    # Group skills by source
+    groups: Dict[str, list] = {}
+    for s in skills_data:
+        label, _ = get_skill_source_display(s.get("source", "unknown"))
+        groups.setdefault(label, []).append(s)
+
+    lines = ["🧩 Available Skills\n"]
+    for label, skills in groups.items():
+        _, icon = get_skill_source_display(label)
+        lines.append(f"{icon} {label}")
+        for s in skills:
+            desc = s.get("description", "")
+            if desc:
+                if len(desc) > 120:
+                    desc = desc[:117] + "..."
+                lines.append(f"  {s['name']}\n  {desc}")
+            else:
+                lines.append(f"  {s['name']}")
+        lines.append("")
+
+    count = len(skills_data)
+    lines.append(f"{count} skill{'s' if count != 1 else ''} found.")
+    lines.append("/skills info <name> · /skills reload")
+    return "\n".join(lines)
+
+
+def get_instructions_keyboard(has_instructions: bool) -> InlineKeyboardMarkup:
+    """Build inline keyboard for instructions actions."""
+    buttons = []
+    if has_instructions:
+        buttons.append([
+            InlineKeyboardButton("👁️ View", callback_data="instr:view"),
+            InlineKeyboardButton("🗑️ Clear", callback_data="instr:clear"),
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton("🔍 Generate with /init", callback_data="instr:init"),
+        ])
+    return InlineKeyboardMarkup(buttons)
+
+
 def _command_reference() -> str:
     """Return the full command reference block."""
     return (
@@ -61,6 +124,7 @@ def _command_reference() -> str:
         "/agent - View and select custom agents\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
+        "/skills - List & inspect available skills\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
@@ -69,7 +133,12 @@ def _command_reference() -> str:
         "/session - Show session info and workspace summary\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
-        "/cwd - Show current directory\n"
+        "/cwd - Show current directory\n\n"
+        "Utilities\n"
+        "/ping - Health check\n"
+        "/allowall - Toggle auto-approve permissions\n"
+        "/instructions - View/set custom instructions\n"
+        "/init - Generate custom instructions for project\n"
     )
 
 
