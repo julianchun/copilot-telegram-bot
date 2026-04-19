@@ -49,20 +49,20 @@ def cleanup_pending_interactions():
 async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str = None):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    
+
+    reply_target = update.effective_message
+
     if service.session_expired:
-        msg = update.effective_message
-        if msg:
-            await msg.reply_text("⚠️ Session expired. Use /start to begin a new session.")
+        if reply_target:
+            await reply_target.reply_text("⚠️ Session expired. Use /start to begin a new session.")
         return
-    
+
     # Prevent sending while session is busy (feature #5)
     if service._chat_lock.locked():
-        msg = update.effective_message
-        if msg:
-            await msg.reply_text("⏳ Please wait for the current request to finish.")
+        if reply_target:
+            await reply_target.reply_text("⏳ Please wait for the current request to finish.")
         return
-    
+
     user_text = override_text or (update.message.text if update.message else "") or ""
 
     attachments = None  # SDK-native attachments list
@@ -235,22 +235,28 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         error_msg = str(e)
         logger.error(f"Chat Timeout Error: {error_msg}")
         await sender.delete_working()
+        if not reply_target:
+            return
         if "session.idle" in error_msg:
             user_msg = error_msg.replace("waiting for session.idle", "waiting for user selection")
-            await update.message.reply_text(f"⚠️ Error: {user_msg}")
+            await reply_target.reply_text(f"⚠️ Error: {user_msg}")
         else:
-            await update.message.reply_text(f"⚠️ Error: {error_msg}")
+            await reply_target.reply_text(f"⚠️ Error: {error_msg}")
     except Exception as e:
         logger.error(f"Chat Error: {e}")
         await sender.delete_working()
-        await update.message.reply_text(f"⚠️ Error: {str(e)}")
+        if reply_target:
+            await reply_target.reply_text(f"⚠️ Error: {str(e)}")
 
 
 async def _send_interaction_msg(update, context, chat_id, text, buttons):
     """Send an inline-keyboard message, with fallback to context.bot.send_message."""
     markup = InlineKeyboardMarkup(buttons)
     try:
-        await update.message.reply_text(text, reply_markup=markup)
+        msg = update.effective_message if update else None
+        if not msg:
+            raise ValueError("No effective message available for interaction reply")
+        await msg.reply_text(text, reply_markup=markup)
     except Exception as send_err:
         logger.error(f"❌ Failed to send interaction message: {send_err}", exc_info=True)
         if chat_id and context:

@@ -228,14 +228,15 @@ class SessionMixin:
         bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
         skill_dirs = [bot_skills_dir]
         if ctx.root_path:
-            # Scan common skill directory locations in the project
             project_root = Path(ctx.root_path)
             for candidate in [
                 project_root / ".github" / "skills",
                 project_root / "skills",
             ]:
-                if candidate.is_dir():
-                    skill_dirs.append(str(candidate))
+                skill_dirs.append(str(candidate))
+
+        # Preserve order while avoiding duplicate roots.
+        skill_dirs = list(dict.fromkeys(skill_dirs))
 
         self.session = await self.client.create_session(
             on_permission_request=PermissionHandler.approve_all,

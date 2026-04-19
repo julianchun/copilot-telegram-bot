@@ -9,6 +9,7 @@ import pytest
 from src.handlers.messages import (
     INTERACTION_TTL,
     PENDING_INTERACTIONS,
+    _send_interaction_msg,
     chat_handler,
     cleanup_pending_interactions,
 )
@@ -144,3 +145,74 @@ class TestChatHandler:
         mock_update.message.reply_text.assert_awaited_once()
         args = mock_update.message.reply_text.call_args
         assert "Please wait" in args[0][0]
+
+    @patch("src.handlers.messages.MessageSender")
+    @patch("src.handlers.messages.service")
+    @patch("src.handlers.messages.check_project_selected", new_callable=AsyncMock, return_value=True)
+    @patch("src.handlers.messages.security_check", new_callable=AsyncMock, return_value=True)
+    async def test_chat_handler_callback_timeout_uses_effective_message(
+        self, mock_sec, mock_proj, mock_svc, mock_sender_cls, mock_update, mock_context
+    ):
+        mock_svc.session_expired = False
+        mock_svc._chat_lock = asyncio.Lock()
+        mock_svc.set_mode = AsyncMock()
+        mock_svc.chat = AsyncMock(side_effect=asyncio.TimeoutError("waiting for session.idle"))
+        sender = MagicMock()
+        sender.create_working = AsyncMock()
+        sender.delete_working = AsyncMock()
+        sender.send_response = AsyncMock()
+        mock_sender_cls.return_value = sender
+
+        mock_update.message = None
+
+        await chat_handler(mock_update, mock_context, override_text="generate instructions")
+
+        mock_update.effective_message.reply_text.assert_awaited_once()
+        text = mock_update.effective_message.reply_text.call_args[0][0]
+        assert "waiting for user selection" in text
+
+    @patch("src.handlers.messages.MessageSender")
+    @patch("src.handlers.messages.service")
+    @patch("src.handlers.messages.check_project_selected", new_callable=AsyncMock, return_value=True)
+    @patch("src.handlers.messages.security_check", new_callable=AsyncMock, return_value=True)
+    async def test_chat_handler_callback_exception_uses_effective_message(
+        self, mock_sec, mock_proj, mock_svc, mock_sender_cls, mock_update, mock_context
+    ):
+        mock_svc.session_expired = False
+        mock_svc._chat_lock = asyncio.Lock()
+        mock_svc.set_mode = AsyncMock()
+        mock_svc.chat = AsyncMock(side_effect=RuntimeError("boom"))
+        sender = MagicMock()
+        sender.create_working = AsyncMock()
+        sender.delete_working = AsyncMock()
+        sender.send_response = AsyncMock()
+        mock_sender_cls.return_value = sender
+
+        mock_update.message = None
+
+        await chat_handler(mock_update, mock_context, override_text="generate instructions")
+
+        mock_update.effective_message.reply_text.assert_awaited_once_with("⚠️ Error: boom")
+
+
+class TestInteractionMessages:
+    async def test_send_interaction_msg_uses_effective_message(self, mock_update, mock_context):
+        mock_update.message = None
+
+        await _send_interaction_msg(mock_update, mock_context, 99999, "Allow?", [[MagicMock()]])
+
+        mock_update.effective_message.reply_text.assert_awaited_once()
+        args, kwargs = mock_update.effective_message.reply_text.call_args
+        assert args[0] == "Allow?"
+        assert "reply_markup" in kwargs
+
+    async def test_send_interaction_msg_falls_back_to_bot_send(self, mock_update, mock_context):
+        mock_update.message = None
+        mock_update.effective_message.reply_text = AsyncMock(side_effect=RuntimeError("telegram failed"))
+
+        await _send_interaction_msg(mock_update, mock_context, 99999, "Allow?", [[MagicMock()]])
+
+        mock_context.bot.send_message.assert_awaited_once()
+        kwargs = mock_context.bot.send_message.call_args.kwargs
+        assert kwargs["chat_id"] == 99999
+        assert kwargs["text"] == "Allow?"

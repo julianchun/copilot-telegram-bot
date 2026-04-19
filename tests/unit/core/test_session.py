@@ -185,3 +185,28 @@ class TestOnSessionEnd:
         await svc._on_session_end({"reason": "timeout"}, MagicMock())
 
         assert svc.session_expired is True
+
+
+# ── _create_session ──────────────────────────────────────────────────
+
+class TestCreateSession:
+    async def test_create_session_registers_project_skill_roots_even_if_missing(self, tmp_path):
+        svc = FakeService()
+        svc.client.create_session = AsyncMock(return_value=MagicMock())
+
+        with patch("src.core.session.ctx.root_path", str(tmp_path)):
+            await svc._create_session()
+
+        skill_dirs = svc.client.create_session.await_args.kwargs["skill_directories"]
+        assert str(tmp_path / ".github" / "skills") in skill_dirs
+        assert str(tmp_path / "skills") in skill_dirs
+
+    async def test_create_session_keeps_skill_directories_unique(self, tmp_path):
+        svc = FakeService()
+        svc.client.create_session = AsyncMock(return_value=MagicMock())
+
+        with patch("src.core.session.ctx.root_path", str(tmp_path)):
+            await svc._create_session()
+
+        skill_dirs = svc.client.create_session.await_args.kwargs["skill_directories"]
+        assert len(skill_dirs) == len(set(skill_dirs))
