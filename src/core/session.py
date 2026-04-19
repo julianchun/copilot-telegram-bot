@@ -224,8 +224,11 @@ class SessionMixin:
         logger.info(f"Creating new session with model: {model}")
 
         # Build skill directories: bot-level + global + project-level
-        bot_skills_dir = str(Path(__file__).resolve().parent.parent.parent / "skills")
-        skill_dirs = [bot_skills_dir]
+        skill_dirs = []
+        
+        bot_skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
+        if bot_skills_dir.exists():
+            skill_dirs.append(str(bot_skills_dir))
         
         home_dir = Path.home()
         for global_candidate in [
@@ -244,7 +247,8 @@ class SessionMixin:
                 project_root / ".agents" / "skills",
                 project_root / "skills",
             ]:
-                skill_dirs.append(str(candidate))
+                if candidate.exists():
+                    skill_dirs.append(str(candidate))
 
         # Preserve order while avoiding duplicate roots.
         skill_dirs = list(dict.fromkeys(skill_dirs))

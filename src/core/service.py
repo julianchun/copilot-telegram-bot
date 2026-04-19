@@ -316,9 +316,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     # ── Models ────────────────────────────────────────────────────────
 
     async def get_available_models(self) -> List[Dict[str, str]]:
-        if not self._is_running:
-            await self.start()
         try:
+            if not self._is_running:
+                await self.start()
             models = await self.client.list_models()
             results = []
             for m in models:
@@ -433,7 +433,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         """Switch mode via native SDK Mode RPC.
 
         Valid modes: "interactive", "plan", "autopilot".
-        Returns True if mode was changed, False otherwise.
+        Returns True on success (including if already in that mode), False otherwise.
         The session and conversation history are preserved across switches.
         """
         valid_modes = ("interactive", "plan", "autopilot")
@@ -463,9 +463,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     async def list_agents(self) -> list:
         """List available custom agents via SDK agent RPC."""
-        if not self.session:
-            await self.start()
         try:
+            if not self.session:
+                await self.start()
+            if not self.session:
+                return []
             result = await self.session.rpc.agent.list()
             return result.agents or []
         except Exception as e:
@@ -524,9 +526,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     async def reload_agents(self) -> list:
         """Reload custom agent definitions from disk. Returns updated agent list."""
-        if not self.session:
-            await self.start()
         try:
+            if not self.session:
+                await self.start()
+            if not self.session:
+                return []
             result = await self.session.rpc.agent.reload()
             return result.agents or []
         except Exception as e:
