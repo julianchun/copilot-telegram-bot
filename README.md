@@ -203,7 +203,7 @@ After selecting a project, a **cockpit message** appears with:
 ## 🔧 Under the Hood
 This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
-- **Custom Agent Mode Switching:** Plan/Edit modes are implemented as SDK custom agents. The `planner` agent is registered at session creation and toggled via `session.rpc.agent.select()`/`deselect()` — preserving conversation history across mode switches.
+- **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
 - **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
@@ -247,8 +247,8 @@ Three-layer, event-driven design under [src/](src/):
 - **[src/main.py](src/main.py)**: Telegram bot entry point. Initializes handlers and polling.
   
 - **[src/core/](src/core/)** — SDK & State Management:
-  - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks, mode switching via SDK custom agents (`set_mode()`), and project info display.
-  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook. Registers the planner custom agent and configures system message customization.
+  - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks, mode switching via the native SDK Mode API (`set_mode()`), custom agent selection via the SDK Agent API, and project info display.
+  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook. Configures system message customization and handles loading custom agent profiles and skills from the workspace.
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
