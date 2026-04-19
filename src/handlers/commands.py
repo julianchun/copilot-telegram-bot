@@ -229,7 +229,7 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /skills command with subcommands: list (default), info <name>, reload."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.ui.menus import format_skill_list
+    from src.ui.menus import format_skill_list, get_skill_source_display
 
     args = context.args or []
     subcommand = args[0].lower() if args else "list"
@@ -259,15 +259,14 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 content = ""
 
-        source_icons = {"project": "📂", "personal": "👤", "plugin": "📦"}
         source = skill.get("source", "unknown")
-        icon = source_icons.get(source, "📁")
+        source_label, icon = get_skill_source_display(source)
         enabled = "✅ Enabled" if skill.get("enabled") else "❌ Disabled"
 
         lines = [
             f"🧩 {skill['name']}",
             f"━━━━━━━━━━━━━━━",
-            f"{icon} Source: {source.capitalize()}",
+            f"{icon} Source: {source_label}",
             enabled,
         ]
         if skill.get("description"):
@@ -434,11 +433,25 @@ async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not await check_project_selected(update): return
 
     instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
-    has_instructions = instructions_path.exists() and instructions_path.read_text(encoding="utf-8").strip()
+    content = ""
+    try:
+        if instructions_path.exists():
+            content = instructions_path.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        logger.error(f"Failed to read instructions file: {e}")
+        await update.message.reply_text(f"⚠️ Failed to read custom instructions: {e}")
+        return
+
+    has_instructions = bool(content)
 
     from src.ui.menus import get_instructions_keyboard
     if has_instructions:
-        size = instructions_path.stat().st_size
+        try:
+            size = instructions_path.stat().st_size
+        except OSError as e:
+            logger.error(f"Failed to stat instructions file: {e}")
+            await update.message.reply_text(f"⚠️ Failed to inspect custom instructions: {e}")
+            return
         text = (
             f"📋 Custom Instructions\n"
             f"Status: ✅ Active\n"

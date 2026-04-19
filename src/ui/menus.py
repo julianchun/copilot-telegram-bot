@@ -51,6 +51,22 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(buttons)
 
 
+def get_skill_source_display(source: str) -> tuple[str, str]:
+    """Return the normalized source label and icon for a skill source."""
+    normalized = (source or "unknown").capitalize()
+    label = {
+        "Project": "Project",
+        "Personal": "Personal",
+        "Plugin": "Built-in",
+    }.get(normalized, normalized)
+    icon = {
+        "Project": "📂",
+        "Personal": "👤",
+        "Built-in": "📦",
+    }.get(label, "📁")
+    return label, icon
+
+
 def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
     """Format skills list grouped by source, card style for Telegram mobile."""
     if not skills_data:
@@ -59,20 +75,12 @@ def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
     # Group skills by source
     groups: Dict[str, list] = {}
     for s in skills_data:
-        source = s.get("source", "unknown").capitalize()
-        label = {
-            "Project": "Project",
-            "Personal": "Personal",
-            "Plugin": "Built-in",
-        }.get(source, source)
+        label, _ = get_skill_source_display(s.get("source", "unknown"))
         groups.setdefault(label, []).append(s)
-
-    # Source label → emoji
-    source_icons = {"Project": "📂", "Personal": "👤", "Built-in": "📦"}
 
     lines = ["🧩 Available Skills\n"]
     for label, skills in groups.items():
-        icon = source_icons.get(label, "📁")
+        _, icon = get_skill_source_display(label)
         lines.append(f"{icon} {label}")
         for s in skills:
             desc = s.get("description", "")

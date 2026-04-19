@@ -141,6 +141,25 @@ class TestSkillsInfo:
         assert "Code Review" in text
         assert "Does reviews." in text
 
+    async def test_info_uses_same_source_label_mapping_as_list(self, mock_update, mock_context, mock_service):
+        """Plugin skills use the same Built-in source label in info view as list view."""
+        mock_service.project_selected = True
+        mock_service.list_skills = AsyncMock(return_value=SAMPLE_SKILLS)
+        mock_context.args = ["info", "greeting"]
+
+        sent_msg = MagicMock()
+        sent_msg.edit_text = AsyncMock()
+        mock_update.message.reply_text = AsyncMock(return_value=sent_msg)
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2]:
+            from src.handlers.commands import skills_command
+            await skills_command(mock_update, mock_context)
+
+        text = sent_msg.edit_text.call_args[0][0]
+        assert "📦 Source: Built-in" in text
+
     async def test_info_not_found(self, mock_update, mock_context, mock_service):
         """Info shows error when skill name doesn't match."""
         mock_service.project_selected = True
@@ -226,6 +245,12 @@ class TestSkillsReload:
 # ---------------------------------------------------------------------------
 
 class TestSkillUI:
+    def test_get_skill_source_display_maps_plugin_to_built_in(self):
+        from src.ui.menus import get_skill_source_display
+        label, icon = get_skill_source_display("plugin")
+        assert label == "Built-in"
+        assert icon == "📦"
+
     def test_format_skill_list_grouped(self):
         from src.ui.menus import format_skill_list
         text = format_skill_list(SAMPLE_SKILLS)

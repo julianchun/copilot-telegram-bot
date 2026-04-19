@@ -186,6 +186,26 @@ class TestInstructionsCommand:
         # Should have inline keyboard with Generate button
         assert "reply_markup" in call_kwargs[1]
 
+    async def test_read_error_returns_user_facing_message(self, mock_update, mock_context, mock_service, tmp_path):
+        instructions_dir = tmp_path / ".github"
+        instructions_dir.mkdir()
+        instructions_file = instructions_dir / "copilot-instructions.md"
+        instructions_file.write_text("Use pytest for testing.\n")
+
+        mock_service.get_working_directory = MagicMock(return_value=str(tmp_path))
+        mock_service.project_selected = True
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3], \
+             patch("pathlib.Path.read_text", side_effect=OSError("permission denied")):
+            from src.handlers.commands import instructions_command
+            await instructions_command(mock_update, mock_context)
+
+        text = mock_update.message.reply_text.call_args[0][0]
+        assert "Failed to read custom instructions" in text
+
     async def test_requires_project(self, mock_update, mock_context, mock_service):
         mock_service.project_selected = False
 
