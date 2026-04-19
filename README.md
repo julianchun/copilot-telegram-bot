@@ -167,27 +167,40 @@ After selecting a project, a **cockpit message** appears with:
 
 ### Commands
 
+**Core Workflow**
 | Command | Description |
 | :--- | :--- |
 | `/start` | Open the main dashboard and project selector. |
-| `/help` | Show context-aware help with live status indicators. |
-| `/ping` | Run a quick health check for bot, session, and SDK RPC state. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
 | `/autopilot` | Toggle **Autopilot Mode**. (Autonomous execution). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
-| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. Conversation history is preserved. |
-| `/context` | Display model context and token usage info. |
-| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
+| `/cancel` | Cancel an in-progress request. |
+
+**Session & Context**
+| Command | Description |
+| :--- | :--- |
+| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Conversation history is preserved. |
+| `/clear` | Reset conversation memory. |
+| `/share` | Export full session to Markdown file. |
 | `/session` | Show session info and workspace summary. |
+| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
+| `/context` | Display model context and token usage info. |
+
+**Configuration & Extensions**
+| Command | Description |
+| :--- | :--- |
 | `/allowall` | Toggle auto-approval for tool permission prompts in the current session. |
 | `/instructions` | Show custom instruction status and inline actions for view, clear, and generate. |
 | `/init` | Ask Copilot to generate `.github/copilot-instructions.md` for the active project. |
 | `/skills` | List skills, inspect a skill, or reload skills from registered skill roots. |
-| `/share` | Export full session to Markdown file. |
-| `/cancel` | Cancel an in-progress request. |
-| `/clear` | Reset conversation memory. |
+
+**System & Files**
+| Command | Description |
+| :--- | :--- |
 | `/ls` | List files in current directory. |
 | `/cwd` | Show current working directory. |
+| `/ping` | Run a quick health check for bot, session, and SDK RPC state. |
+| `/help` | Show context-aware help with live status indicators. |
 
 ### Custom Instructions
 - `/instructions` opens an inline menu for project-level custom instructions stored at `.github/copilot-instructions.md`.
@@ -201,12 +214,16 @@ After selecting a project, a **cockpit message** appears with:
 - `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
 
 ## 🔧 Under the Hood
+<details>
+<summary><strong>Click to expand technical details</strong></summary>
+
 This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
 - **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
 - **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
+</details>
 
 ## ⚡ How Permissions Work
 
@@ -240,7 +257,18 @@ Safe, read-only operations proceed automatically so you're not tapping "Allow" o
 
 This keeps you **in the loop** on critical actions while maintaining a smooth flow for safe operations.
 
+### 🤖 True "Hands-Free" Autopilot
+By default, Autopilot mode still pauses to ask for your permission before executing dangerous commands (like `npm install`). 
+
+For a fully autonomous, hands-free experience:
+1. Type `/allowall` (Tells the bot: "Auto-approve all security prompts").
+2. Type `/autopilot build me a react login page` (Tells the AI: "Take initiative and build this").
+
+With both active, Copilot will plan the feature, create the files, install dependencies, and run tests continuously without stopping to ask you for a single button tap!
+
 ## 🏗️ Architecture
+<details>
+<summary><strong>Click to expand architecture details</strong></summary>
 
 Three-layer, event-driven design under [src/](src/):
 
@@ -266,6 +294,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[formatters.py](src/ui/formatters.py)**: Specialized tool display (bash, edit, create, grep, view, report_intent, task, update_todo) with heredoc truncation.
   - **[menus.py](src/ui/menus.py)**: Menu text generation, inline keyboard layouts, cockpit display.
   - **[session_exporter.py](src/ui/session_exporter.py)**: Exports full sessions to formatted Markdown files.
+</details>
 
 ## ⚠️ Limitations
 - **Single-user only** — designed for personal use with one `ALLOWED_USER_ID`
