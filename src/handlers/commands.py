@@ -335,10 +335,15 @@ async def _session_files(update: Update):
         await update.message.reply_text("📂 Session workspace files: (empty)")
         return
 
+    from src.config import TELEGRAM_MSG_LIMIT
+
     lines = []
     for entry in sorted(files_dir.iterdir()):
         if entry.is_file():
-            size = entry.stat().st_size
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                continue
             if size < 1024:
                 size_str = f"{size} B"
             elif size < 1024 * 1024:
@@ -349,7 +354,13 @@ async def _session_files(update: Update):
         elif entry.is_dir():
             lines.append(f"  📁 {entry.name}/")
 
-    await update.message.reply_text(f"📂 Session workspace files:\n" + "\n".join(lines))
+    header = "📂 Session workspace files:\n"
+    body = "\n".join(lines)
+    text = header + body
+    if len(text) > TELEGRAM_MSG_LIMIT:
+        avail = TELEGRAM_MSG_LIMIT - len("\n... truncated")
+        text = text[:avail] + "\n... truncated"
+    await update.message.reply_text(text)
 
 
 async def _session_plan(update: Update):

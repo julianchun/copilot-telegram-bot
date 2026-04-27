@@ -211,6 +211,19 @@ class TestSessionCommand:
         reply = mock_update.message.reply_text.call_args.args[0]
         assert "No plan found" in reply
 
+    async def test_session_plan_empty_file(self, mock_update, mock_context, mock_service, tmp_path):
+        """/session plan when plan.md exists but is empty or whitespace-only."""
+        from src.handlers.commands import session_command
+
+        (tmp_path / "plan.md").write_text("   \n\n  ")
+        mock_context.args = ["plan"]
+        mock_service.session.workspace_path = tmp_path
+
+        await session_command(mock_update, mock_context)
+
+        reply = mock_update.message.reply_text.call_args.args[0]
+        assert "empty" in reply
+
     async def test_session_plan_large_sends_file(self, mock_update, mock_context, mock_service, tmp_path):
         """/session plan sends file when content exceeds Telegram limit."""
         from src.handlers.commands import session_command
