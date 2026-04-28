@@ -12,9 +12,10 @@ PLANNER_AGENT: dict = {
         "2. Ask clarifying questions if needed.\n"
         "3. Deliver a structured, phased plan with short bullets, "
         "file references, and rationale.\n"
-        "RULES: Do NOT create any files in the workspace. "
-        "Do NOT write any code. Response should be the plan in clear text. "
-        "No code blocks. Keep it scannable and mobile-friendly.\n"
+        "4. Save the final plan to plan.md in the session workspace using the create "
+        "tool (or edit if plan.md already exists). Write the full plan content there.\n"
+        "RULES: Do NOT write any code. Do NOT create files other than plan.md. "
+        "Keep it scannable and mobile-friendly.\n"
         "FORMAT: PLAIN TEXT (no markdown code blocks, use simple bullets)."
     ),
 }

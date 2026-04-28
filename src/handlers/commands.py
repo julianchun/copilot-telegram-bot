@@ -293,7 +293,7 @@ async def _session_info(update: Update):
         f"• Model: {model}\n"
         f"• Mode: {mode}\n"
         f"• Total Requests: {total_requests}\n"
-        f"📂 Workspace\n"
+        f"\n📂 Workspace\n"
         f"• Project: {service.project_name or Path(cwd).name}\n"
         f"• Path: {cwd}\n"
         f"• Branch: {branch}\n"
@@ -310,7 +310,7 @@ async def _session_info(update: Update):
 
     quota_summary = tracker.get_quota_summary()
     if quota_summary:
-        msg += f"\n💳 Quota Status:\n{quota_summary}\n\n"
+        msg += f"\n💳 Quota Status:\n{quota_summary}\n"
 
     usage_summary = await tracker.get_usage_summary()
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
