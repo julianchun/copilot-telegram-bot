@@ -470,6 +470,90 @@ async def _session_info(update: Update):
 
     await update.message.reply_text(msg)
 
+
+async def _session_files(update: Update):
+    """List files in the session workspace directory."""
+    workspace_raw = getattr(service.session, "workspace_path", None) if service.session else None
+
+    if not workspace_raw:
+        await update.message.reply_text(
+            "📂 Session workspace not available.\n"
+            "Workspace files are only available when infinite sessions are enabled."
+        )
+        return
+
+    workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
+    files_dir = workspace_path / "files"
+    if not files_dir.exists() or not any(files_dir.iterdir()):
+        await update.message.reply_text("📂 Session workspace files: (empty)")
+        return
+
+    from src.config import TELEGRAM_MSG_LIMIT
+
+    lines = []
+    for entry in sorted(files_dir.iterdir()):
+        if entry.is_file():
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                continue
+            if size < 1024:
+                size_str = f"{size} B"
+            elif size < 1024 * 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            lines.append(f"  📄 {entry.name}  ({size_str})")
+        elif entry.is_dir():
+            lines.append(f"  📁 {entry.name}/")
+
+    header = "📂 Session workspace files:\n"
+    body = "\n".join(lines)
+    text = header + body
+    if len(text) > TELEGRAM_MSG_LIMIT:
+        avail = TELEGRAM_MSG_LIMIT - len("\n... truncated")
+        text = text[:avail] + "\n... truncated"
+    await update.message.reply_text(text)
+
+
+async def _session_plan(update: Update):
+    """Show the session plan (plan.md from workspace)."""
+    from src.config import TELEGRAM_MSG_LIMIT
+
+    workspace_raw = getattr(service.session, "workspace_path", None) if service.session else None
+
+    if not workspace_raw:
+        await update.message.reply_text(
+            "📋 Session plan not available.\n"
+            "Session plans are only available when infinite sessions are enabled."
+        )
+        return
+
+    workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
+    plan_file = workspace_path / "plan.md"
+    if not plan_file.is_file():
+        await update.message.reply_text("📋 No plan found for this session.")
+        return
+
+    try:
+        content = plan_file.read_text(encoding="utf-8", errors="replace").strip()
+    except (PermissionError, OSError) as e:
+        await update.message.reply_text(f"📋 Error reading plan: {e}")
+        return
+
+    if not content:
+        await update.message.reply_text("📋 Session plan is empty.")
+        return
+
+    if len(content) <= TELEGRAM_MSG_LIMIT - 50:
+        await update.message.reply_text(f"📋 Session Plan:\n\n{content}")
+    else:
+        import io
+        doc = io.BytesIO(content.encode("utf-8"))
+        doc.name = "plan.md"
+        await update.message.reply_document(document=doc, caption="📋 Session Plan (full)")
+
+
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Health check — works without project selection."""
     if not await security_check(update): return
