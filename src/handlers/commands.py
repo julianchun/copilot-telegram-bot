@@ -391,31 +391,44 @@ async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"⚠️ Error sharing session: {e}")
 
 async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show session info and workspace summary."""
+    """Session management: /session [info|files|plan]."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
 
-    # Fetch latest session metadata (name, created, modified) from list_sessions()
+    subcommand = (context.args[0].lower() if context.args else "info")
+
+    if subcommand == "info":
+        await _session_info(update)
+    elif subcommand == "files":
+        await _session_files(update)
+    elif subcommand == "plan":
+        await _session_plan(update)
+    else:
+        await update.message.reply_text(
+            "📋 /session subcommands:\n"
+            "• /session info — Session info & workspace summary\n"
+            "• /session files — List session workspace files\n"
+            "• /session plan — Show session plan"
+        )
+
+
+async def _session_info(update: Update):
+    """Show session info and workspace summary."""
     await service.populate_session_metadata()
-    
+
     session_info = service.get_session_info()
     tracker = service.usage_tracker
 
-    # Session uptime from session_info
     uptime_str = session_info.duration()
 
     model = service.user_selected_model or service.current_model or "Auto"
     mode_labels = {"interactive": "Chat", "plan": "Planning", "autopilot": "Autopilot"}
     mode = mode_labels.get(service.current_mode, "Chat")
     status = "Expired" if service.session_expired else "Active"
-    
-    # Full session ID from session_info
+
     session_id_full = session_info.session_id or service.session_id
-    
-    # Use created time from session_info (ISO format string from SDK)
     created_str = session_info.created or "N/A"
-    
-    # Use session_info fields
+
     cwd = session_info.cwd or str(ctx.root_path)
     branch = session_info.branch or "N/A"
 
@@ -433,33 +446,113 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Mode: {mode}\n"
         f"{agent_line}"
         f"• Total Requests: {total_requests}\n"
-        f"📂 Workspace\n"
+        f"\n📂 Workspace\n"
         f"• Project: {service.project_name or Path(cwd).name}\n"
         f"• Path: {cwd}\n"
         f"• Branch: {branch}\n"
     )
-    
-    # Git root and repository if available
+
     if session_info.git_root:
         msg += f"• Git Root: {session_info.git_root}\n"
     if session_info.repository:
         msg += f"• Repository: {session_info.repository}\n"
 
-    # Token context
     if tracker.current_tokens or tracker.token_limit:
         pct = (tracker.current_tokens / tracker.token_limit * 100) if tracker.token_limit else 0
         msg += f"• Context: {tracker.current_tokens}/{tracker.token_limit} ({pct:.0f}%)\n"
 
-    # Quota status
     quota_summary = tracker.get_quota_summary()
     if quota_summary:
-        msg += f"\n💳 Quota Status:\n{quota_summary}\n\n"
+        msg += f"\n💳 Quota Status:\n{quota_summary}\n"
 
-    # Usage summary
     usage_summary = await tracker.get_usage_summary()
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)
+
+
+async def _session_files(update: Update):
+    """List files in the session workspace directory."""
+    workspace_raw = getattr(service.session, "workspace_path", None) if service.session else None
+
+    if not workspace_raw:
+        await update.message.reply_text(
+            "📂 Session workspace not available.\n"
+            "Workspace files are only available when infinite sessions are enabled."
+        )
+        return
+
+    workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
+    files_dir = workspace_path / "files"
+    if not files_dir.exists() or not any(files_dir.iterdir()):
+        await update.message.reply_text("📂 Session workspace files: (empty)")
+        return
+
+    from src.config import TELEGRAM_MSG_LIMIT
+
+    lines = []
+    for entry in sorted(files_dir.iterdir()):
+        if entry.is_file():
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                continue
+            if size < 1024:
+                size_str = f"{size} B"
+            elif size < 1024 * 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            lines.append(f"  📄 {entry.name}  ({size_str})")
+        elif entry.is_dir():
+            lines.append(f"  📁 {entry.name}/")
+
+    header = "📂 Session workspace files:\n"
+    body = "\n".join(lines)
+    text = header + body
+    if len(text) > TELEGRAM_MSG_LIMIT:
+        avail = TELEGRAM_MSG_LIMIT - len("\n... truncated")
+        text = text[:avail] + "\n... truncated"
+    await update.message.reply_text(text)
+
+
+async def _session_plan(update: Update):
+    """Show the session plan (plan.md from workspace)."""
+    from src.config import TELEGRAM_MSG_LIMIT
+
+    workspace_raw = getattr(service.session, "workspace_path", None) if service.session else None
+
+    if not workspace_raw:
+        await update.message.reply_text(
+            "📋 Session plan not available.\n"
+            "Session plans are only available when infinite sessions are enabled."
+        )
+        return
+
+    workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
+    plan_file = workspace_path / "plan.md"
+    if not plan_file.is_file():
+        await update.message.reply_text("📋 No plan found for this session.")
+        return
+
+    try:
+        content = plan_file.read_text(encoding="utf-8", errors="replace").strip()
+    except (PermissionError, OSError) as e:
+        await update.message.reply_text(f"📋 Error reading plan: {e}")
+        return
+
+    if not content:
+        await update.message.reply_text("📋 Session plan is empty.")
+        return
+
+    if len(content) <= TELEGRAM_MSG_LIMIT - 50:
+        await update.message.reply_text(f"📋 Session Plan:\n\n{content}")
+    else:
+        import io
+        doc = io.BytesIO(content.encode("utf-8"))
+        doc.name = "plan.md"
+        await update.message.reply_document(document=doc, caption="📋 Session Plan (full)")
+
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Health check — works without project selection."""
