@@ -50,6 +50,69 @@ def get_model_keyboard(models_data: List[Dict[str, Any]]) -> InlineKeyboardMarku
     buttons = _build_button_grid(btns)
     return InlineKeyboardMarkup(buttons)
 
+
+def get_skill_source_display(source: str) -> tuple[str, str]:
+    """Return the normalized source label and icon for a skill source."""
+    normalized = (source or "unknown").capitalize()
+    label = {
+        "Project": "Project",
+        "Personal": "Personal",
+        "Plugin": "Built-in",
+    }.get(normalized, normalized)
+    icon = {
+        "Project": "📂",
+        "Personal": "👤",
+        "Built-in": "📦",
+    }.get(label, "📁")
+    return label, icon
+
+
+def format_skill_list(skills_data: List[Dict[str, Any]]) -> str:
+    """Format skills list grouped by source, card style for Telegram mobile."""
+    if not skills_data:
+        return "🧩 No skills found."
+
+    # Group skills by source
+    groups: Dict[str, list] = {}
+    for s in skills_data:
+        label, _ = get_skill_source_display(s.get("source", "unknown"))
+        groups.setdefault(label, []).append(s)
+
+    lines = ["🧩 Available Skills\n"]
+    for label, skills in groups.items():
+        _, icon = get_skill_source_display(label)
+        lines.append(f"{icon} {label}")
+        for s in skills:
+            desc = s.get("description", "")
+            if desc:
+                if len(desc) > 120:
+                    desc = desc[:117] + "..."
+                lines.append(f"  {s['name']}\n  {desc}")
+            else:
+                lines.append(f"  {s['name']}")
+        lines.append("")
+
+    count = len(skills_data)
+    lines.append(f"{count} skill{'s' if count != 1 else ''} found.")
+    lines.append("/skills info <name> · /skills reload")
+    return "\n".join(lines)
+
+
+def get_instructions_keyboard(has_instructions: bool) -> InlineKeyboardMarkup:
+    """Build inline keyboard for instructions actions."""
+    buttons = []
+    if has_instructions:
+        buttons.append([
+            InlineKeyboardButton("👁️ View", callback_data="instr:view"),
+            InlineKeyboardButton("🗑️ Clear", callback_data="instr:clear"),
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton("🔍 Generate with /init", callback_data="instr:init"),
+        ])
+    return InlineKeyboardMarkup(buttons)
+
+
 def _command_reference() -> str:
     """Return the full command reference block."""
     return (
@@ -57,9 +120,12 @@ def _command_reference() -> str:
         "/help - Show help manual\n\n"
         "Core Workflow\n"
         "/plan - Architecture & Planning mode\n"
-        "/edit - Standard Chat/Coding mode\n\n"
+        "/autopilot - Autonomous execution mode\n"
+        "/edit - Standard Chat/Coding mode\n"
+        "/agent - View and select custom agents\n\n"
         "Session Control\n"
         "/model - Switch AI Model\n"
+        "/skills - List & inspect available skills\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
@@ -68,7 +134,12 @@ def _command_reference() -> str:
         "/session - Session management (info, files, plan)\n\n"
         "Navigation\n"
         "/ls - Project file tree\n"
-        "/cwd - Show current directory\n"
+        "/cwd - Show current directory\n\n"
+        "Utilities\n"
+        "/ping - Health check\n"
+        "/allowall - Toggle auto-approve permissions\n"
+        "/instructions - View/set custom instructions\n"
+        "/init - Generate custom instructions for project\n"
     )
 
 
@@ -92,13 +163,16 @@ def get_cockpit_content(
     branch: str,
     file_count: int,
     folder_count: int,
+    agent: str | None = None,
 ) -> str:
     """Cockpit message sent after project selection — stats + commands."""
     branch_line = f"🔀 Branch: {branch}\n" if branch else ""
+    agent_line = f"🤖 Agent: {agent}\n" if agent else ""
     return (
         f"✅ Project Loaded: {project_name}\n\n"
         f"🤖 Model: {model}\n"
         f"⚙️ Mode: {mode}\n"
+        f"{agent_line}"
         f"📂 Path: {path}\n"
         f"{branch_line}"
         f"📊 Stats: {file_count} files · {folder_count} folders\n\n"
@@ -143,4 +217,28 @@ def get_reasoning_keyboard(model_id: str, supported_efforts: list, default_effor
     buttons = _build_button_grid(btns)
     # Add skip button to use default
     buttons.append([InlineKeyboardButton("Skip (use default)", callback_data=f"reasoning:{model_id}:default")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def get_agent_keyboard(agents: list, current_agent: str | None = None) -> InlineKeyboardMarkup:
+    """Build inline keyboard for agent selection.
+
+    Each agent shows its display_name (or name) with ✅ if currently active.
+    A "Default (No Agent)" option at top deselects any active agent.
+    """
+    default_label = "Default (No Agent)"
+    if current_agent is None:
+        default_label += " ✅"
+    btns = [InlineKeyboardButton(default_label, callback_data="agent:__default__")]
+
+    for agent in agents:
+        name = agent.name if hasattr(agent, "name") else agent.get("name", "unknown")
+        display = agent.display_name if hasattr(agent, "display_name") else agent.get("display_name", name)
+        label = display or name
+        if name == current_agent:
+            label += " ✅"
+        btns.append(InlineKeyboardButton(label, callback_data=f"agent:{name}"))
+
+    buttons = _build_button_grid(btns, columns=1)
+    buttons.append([InlineKeyboardButton("🔄 Reload Agents", callback_data="agent:__reload__")])
     return InlineKeyboardMarkup(buttons)

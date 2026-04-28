@@ -45,8 +45,8 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     
     If `query` is provided (CallbackQuery), edits the original start message to remove the keyboard.
     """
-    context.user_data['plan_mode'] = False
-    await service.set_mode("general")
+    await service.set_mode("interactive")
+    await service.deselect_agent()
     await service.set_working_directory(str(path))
 
     # Edit the start message to remove inline keyboard and show final status
@@ -152,6 +152,40 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
+async def _handle_agent_callback(query, context):
+    """Handle agent: callback queries (agent selection keyboard)."""
+    from src.ui.menus import get_agent_keyboard
+    name = query.data.split(":", 1)[1]
+
+    if name == "__reload__":
+        agents = await service.reload_agents()
+        current = await service.get_current_agent()
+        try:
+            from telegram.error import BadRequest
+            if agents:
+                keyboard = get_agent_keyboard(agents, current)
+                await query.edit_message_text("🔄 Agents reloaded. Select an agent:", reply_markup=keyboard)
+            else:
+                await query.edit_message_text("🔄 Agents reloaded. No custom agents found.")
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Failed to edit agent menu: {e}")
+        return
+
+    if name == "__default__":
+        if await service.deselect_agent():
+            await query.edit_message_text("🤖 Switched to default (no agent)")
+        else:
+            await query.edit_message_text("⚠️ Failed to deselect agent")
+        return
+
+    if await service.select_agent(name):
+        await query.edit_message_text(f"🤖 Agent selected: {name}")
+    else:
+        await query.edit_message_text(f"⚠️ Failed to select agent: {name}")
+
+
+
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
     folder = query.data.split(":")[1]
@@ -181,6 +215,54 @@ async def _handle_granted_project_callback(query, context):
         await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
 
 
+async def _handle_instructions_callback(query, update, context):
+    """Handle instr: callback queries (view, clear, init)."""
+    action = query.data.split(":")[1]
+
+    if action == "view":
+        instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+        if instructions_path.exists():
+            content = instructions_path.read_text(encoding="utf-8").strip()
+            if content:
+                from src.config import TELEGRAM_MSG_LIMIT
+                display = content
+                if len(display) > TELEGRAM_MSG_LIMIT - 100:
+                    display = display[:TELEGRAM_MSG_LIMIT - 100] + "\n... truncated"
+                await query.edit_message_text(
+                    f"📋 Custom Instructions\n"
+                    f"─────────────────\n"
+                    f"{display}"
+                )
+            else:
+                await query.edit_message_text("📋 No custom instructions found.")
+        else:
+            await query.edit_message_text("📋 No custom instructions found.")
+
+    elif action == "clear":
+        instructions_path = Path(service.get_working_directory()) / ".github" / "copilot-instructions.md"
+        if instructions_path.exists():
+            instructions_path.unlink()
+            await service.reset_session()
+            await query.edit_message_text(
+                "🗑️ Custom instructions cleared.\n"
+                "Session reset to apply changes."
+            )
+        else:
+            await query.edit_message_text("📋 No custom instructions to clear.")
+
+    elif action == "init":
+        await query.edit_message_text("🔍 Analyzing project to generate custom instructions...")
+        from src.handlers.messages import chat_handler
+        prompt = (
+            "Analyze this project's structure, tech stack, conventions, and patterns. "
+            "Then create a .github/copilot-instructions.md file with concise, actionable instructions "
+            "that will help Copilot understand this project. Include: language/framework, "
+            "coding conventions, build/test commands, project structure overview, "
+            "and any important patterns. Keep it focused and under 50 lines."
+        )
+        await chat_handler(update, context, override_text=prompt)
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -199,10 +281,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("perm:") or data.startswith("input:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("agent:"):
+            await _handle_agent_callback(query, context)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
         elif data.startswith("reasoning:"):
             await _handle_reasoning_callback(query, context)
+        elif data.startswith("instr:"):
+            await _handle_instructions_callback(query, update, context)
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
             return ConversationHandler.END

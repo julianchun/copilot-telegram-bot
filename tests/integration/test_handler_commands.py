@@ -56,7 +56,8 @@ async def test_clear_command_resets_session(mock_update, mock_context, mock_serv
 
     await clear_command(mock_update, mock_context)
 
-    mock_service.set_mode.assert_awaited_once_with("general")
+    mock_service.set_mode.assert_awaited_once_with("interactive")
+    mock_service.deselect_agent.assert_awaited_once()
     mock_service.reset_session.assert_awaited_once()
     args = mock_update.message.reply_text.call_args.args[0]
     assert "Session Cleared" in args

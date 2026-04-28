@@ -13,9 +13,11 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 
 ## ✨ Key Features
 
-### 🤖 Dual Operation Modes
-- **📝 Plan Mode (Architecture):** Activates a custom **planner agent** via the SDK's agent RPC API. The agent is configured to brainstorm architecture, plan features, and outline project structures—without writing code. Switching modes preserves session context and conversation history.
-- **💬 Edit Mode (Development):** The default Copilot experience—no agent selected. Write code, debug errors, run tests, and execute terminal commands directly from chat.
+### 🤖 Flexible AI Behaviors (Modes, Agents, & Skills)
+- **3 Native Operation Modes:** Switch instantly between **Edit** (coding), **Plan** (architecting), and **Autopilot** (autonomous execution) while preserving your conversation history.
+- **Custom Agents:** Load and switch between specialized agents (`/agent`) tailored for specific tasks, independent of your current mode.
+- **Skills System:** Load reusable prompt modules from `skills/` directories globally or per-project to extend Copilot's capabilities (`/skills`).
+- **Project Instructions:** Native support for `.github/copilot-instructions.md` with inline actions to view, clear, or auto-generate them based on project analysis (`/instructions`).
 
 ### 📱 Mobile-First UX
 Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:
@@ -165,29 +167,63 @@ After selecting a project, a **cockpit message** appears with:
 
 ### Commands
 
+**Core Workflow**
 | Command | Description |
 | :--- | :--- |
 | `/start` | Open the main dashboard and project selector. |
-| `/help` | Show context-aware help with live status indicators. |
 | `/plan` | Toggle **Plan Mode**. (Great for "How should I build X?"). |
+| `/autopilot` | Toggle **Autopilot Mode**. (Autonomous execution). |
 | `/edit` | Switch back to **Chat Mode**. (Implementation focus). |
-| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Shows billing multipliers. Reasoning effort picker for supported models. Conversation history is preserved. |
-| `/context` | Display model context and token usage info. |
-| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
-| `/session` | Show session info and workspace summary. |
-| `/share` | Export full session to Markdown file. |
 | `/cancel` | Cancel an in-progress request. |
+
+**Session & Context**
+| Command | Description |
+| :--- | :--- |
+| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Conversation history is preserved. |
 | `/clear` | Reset conversation memory. |
+| `/share` | Export full session to Markdown file. |
+| `/session` | Show session info and workspace summary. |
+| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
+| `/context` | Display model context and token usage info. |
+
+**Configuration & Extensions**
+| Command | Description |
+| :--- | :--- |
+| `/allowall` | Toggle auto-approval for tool permission prompts in the current session. |
+| `/instructions` | Show custom instruction status and inline actions for view, clear, and generate. |
+| `/init` | Ask Copilot to generate `.github/copilot-instructions.md` for the active project. |
+| `/skills` | List skills, inspect a skill, or reload skills from registered skill roots. |
+
+**System & Files**
+| Command | Description |
+| :--- | :--- |
 | `/ls` | List files in current directory. |
 | `/cwd` | Show current working directory. |
+| `/ping` | Run a quick health check for bot, session, and SDK RPC state. |
+| `/help` | Show context-aware help with live status indicators. |
+
+### Custom Instructions
+- `/instructions` opens an inline menu for project-level custom instructions stored at `.github/copilot-instructions.md`.
+- `Generate` reuses the normal chat pipeline, so permission prompts and follow-up choices work from callback queries as well as slash commands.
+- `Clear` removes the file and recreates the session so the absence of instructions applies immediately.
+
+### Skills
+- The bot loads skills from the following directories:
+  - **Global/Personal:** `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/`
+  - **Project-specific:** `.github/skills/`, `.claude/skills/`, `.agents/skills/`, and `skills/`
+- `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
 
 ## 🔧 Under the Hood
+<details>
+<summary><strong>Click to expand technical details</strong></summary>
+
 This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
-- **Custom Agent Mode Switching:** Plan/Edit modes are implemented as SDK custom agents. The `planner` agent is registered at session creation and toggled via `session.rpc.agent.select()`/`deselect()` — preserving conversation history across mode switches.
+- **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
-- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. Read-only tools (`list_files`, `read_file`) use `skip_permission=True` for zero-friction access.
+- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
+</details>
 
 ## ⚡ How Permissions Work
 
@@ -221,15 +257,26 @@ Safe, read-only operations proceed automatically so you're not tapping "Allow" o
 
 This keeps you **in the loop** on critical actions while maintaining a smooth flow for safe operations.
 
+### 🤖 True "Hands-Free" Autopilot
+By default, Autopilot mode still pauses to ask for your permission before executing dangerous commands (like `npm install`). 
+
+For a fully autonomous, hands-free experience:
+1. Type `/allowall` (Tells the bot: "Auto-approve all security prompts").
+2. Type `/autopilot build me a react login page` (Tells the AI: "Take initiative and build this").
+
+With both active, Copilot will plan the feature, create the files, install dependencies, and run tests continuously without stopping to ask you for a single button tap!
+
 ## 🏗️ Architecture
+<details>
+<summary><strong>Click to expand architecture details</strong></summary>
 
 Three-layer, event-driven design under [src/](src/):
 
 - **[src/main.py](src/main.py)**: Telegram bot entry point. Initializes handlers and polling.
   
 - **[src/core/](src/core/)** — SDK & State Management:
-  - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks, mode switching via SDK custom agents (`set_mode()`), and project info display.
-  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook. Registers the planner custom agent and configures system message customization.
+  - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks, mode switching via the native SDK Mode API (`set_mode()`), custom agent selection via the SDK Agent API, and project info display.
+  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook. Configures system message customization and handles loading custom agent profiles and skills from the workspace.
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
   - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
@@ -238,8 +285,8 @@ Three-layer, event-driven design under [src/](src/):
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.
 
 - **[src/handlers/](src/handlers/)** — Telegram Handlers:
-  - **[commands.py](src/handlers/commands.py)**: All 13 bot commands (`/start`, `/help`, `/plan`, `/model`, `/cancel`, etc.).
-  - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements interaction callback — when agent needs permission, creates `asyncio.Future` + inline keyboard.
+  - **[commands.py](src/handlers/commands.py)**: Bot commands including session controls, health checks, instructions actions, and skill reload/list commands.
+  - **[messages.py](src/handlers/messages.py)**: Chat messages + file attachments. Implements the interaction callback and callback-safe reply flow for permission prompts and model questions.
   - **[callbacks.py](src/handlers/callbacks.py)**: Inline button clicks. Resolves Futures — when user taps "Allow"/"Deny", resolves `future.set_result()`.
 
 - **[src/ui/](src/ui/)** — Output & Formatting:
@@ -247,6 +294,7 @@ Three-layer, event-driven design under [src/](src/):
   - **[formatters.py](src/ui/formatters.py)**: Specialized tool display (bash, edit, create, grep, view, report_intent, task, update_todo) with heredoc truncation.
   - **[menus.py](src/ui/menus.py)**: Menu text generation, inline keyboard layouts, cockpit display.
   - **[session_exporter.py](src/ui/session_exporter.py)**: Exports full sessions to formatted Markdown files.
+</details>
 
 ## ⚠️ Limitations
 - **Single-user only** — designed for personal use with one `ALLOWED_USER_ID`

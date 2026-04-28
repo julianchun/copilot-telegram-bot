@@ -49,20 +49,24 @@ def cleanup_pending_interactions():
 async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str = None):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    
+
+    reply_target = update.effective_message
+
     if service.session_expired:
-        await update.message.reply_text("⚠️ Session expired. Use /start to begin a new session.")
+        if reply_target:
+            await reply_target.reply_text("⚠️ Session expired. Use /start to begin a new session.")
         return
-    
+
     # Prevent sending while session is busy (feature #5)
     if service._chat_lock.locked():
-        await update.message.reply_text("⏳ Please wait for the current request to finish.")
+        if reply_target:
+            await reply_target.reply_text("⏳ Please wait for the current request to finish.")
         return
-    
+
     user_text = override_text or (update.message.text if update.message else "") or ""
 
     attachments = None  # SDK-native attachments list
-    attachment = update.message.document or (update.message.photo[-1] if update.message.photo else None)
+    attachment = (update.message.document or (update.message.photo[-1] if update.message.photo else None)) if update.message else None
     if attachment:
         try:
             file_obj = await attachment.get_file()
@@ -84,12 +88,8 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             
     if not user_text: return
 
-    # Sync mode state → SDK agent selection (no-op if already correct)
-    mode = "plan" if context.user_data.get('plan_mode') else "general"
-    await service.set_mode(mode)
-
     # Initialize message sender with the user's message chat
-    sender = MessageSender(update.message)
+    sender = MessageSender(update.effective_message)
     await sender.create_working()  # Show "Working..." immediately at the top
     completion_event = asyncio.Event()
     response_chunks: list[str] = []
@@ -209,12 +209,15 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         try:
             project, model, cost = service.get_usage_metadata()
             git = await service.get_git_info()
-            mode_label = "Planning" if service.current_mode == "plan" else "Chat"
+            mode_labels = {"interactive": "Chat", "plan": "Planning", "autopilot": "Autopilot"}
+            mode_label = mode_labels.get(service.current_mode, "Chat")
             parts = [f"📂 {project}"]
             if git:
                 parts.append(f"🔀 {git[1:]}")
             parts.append(f"🤖 {model} ({cost}x)")
             parts.append(f"⚙️ Mode: {mode_label}")
+            if service.current_agent:
+                parts.append(f"🤖 Agent: {service.current_agent}")
             footer = "\n".join(parts)
         except Exception as e:
             logger.error(f"Footer generation failed: {e}")
@@ -231,22 +234,28 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         error_msg = str(e)
         logger.error(f"Chat Timeout Error: {error_msg}")
         await sender.delete_working()
+        if not reply_target:
+            return
         if "session.idle" in error_msg:
             user_msg = error_msg.replace("waiting for session.idle", "waiting for user selection")
-            await update.message.reply_text(f"⚠️ Error: {user_msg}")
+            await reply_target.reply_text(f"⚠️ Error: {user_msg}")
         else:
-            await update.message.reply_text(f"⚠️ Error: {error_msg}")
+            await reply_target.reply_text(f"⚠️ Error: {error_msg}")
     except Exception as e:
         logger.error(f"Chat Error: {e}")
         await sender.delete_working()
-        await update.message.reply_text(f"⚠️ Error: {str(e)}")
+        if reply_target:
+            await reply_target.reply_text(f"⚠️ Error: {str(e)}")
 
 
 async def _send_interaction_msg(update, context, chat_id, text, buttons):
     """Send an inline-keyboard message, with fallback to context.bot.send_message."""
     markup = InlineKeyboardMarkup(buttons)
     try:
-        await update.message.reply_text(text, reply_markup=markup)
+        msg = update.effective_message if update else None
+        if not msg:
+            raise ValueError("No effective message available for interaction reply")
+        await msg.reply_text(text, reply_markup=markup)
     except Exception as send_err:
         logger.error(f"❌ Failed to send interaction message: {send_err}", exc_info=True)
         if chat_id and context:
