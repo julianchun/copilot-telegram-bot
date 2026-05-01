@@ -484,28 +484,42 @@ async def _session_files(update: Update):
 
     workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
     files_dir = workspace_path / "files"
-    if not files_dir.exists() or not any(files_dir.iterdir()):
+    if not files_dir.exists():
+        await update.message.reply_text("📂 Session workspace files: (empty)")
+        return
+
+    try:
+        entries = sorted(files_dir.iterdir())
+    except (PermissionError, OSError) as e:
+        await update.message.reply_text(f"📂 Error reading session workspace files: {e}")
+        return
+
+    if not entries:
         await update.message.reply_text("📂 Session workspace files: (empty)")
         return
 
     from src.config import TELEGRAM_MSG_LIMIT
 
     lines = []
-    for entry in sorted(files_dir.iterdir()):
-        if entry.is_file():
-            try:
+    for entry in entries:
+        try:
+            if entry.is_file():
                 size = entry.stat().st_size
-            except OSError:
-                continue
-            if size < 1024:
-                size_str = f"{size} B"
-            elif size < 1024 * 1024:
-                size_str = f"{size / 1024:.1f} KB"
-            else:
-                size_str = f"{size / (1024 * 1024):.1f} MB"
-            lines.append(f"  📄 {entry.name}  ({size_str})")
-        elif entry.is_dir():
-            lines.append(f"  📁 {entry.name}/")
+                if size < 1024:
+                    size_str = f"{size} B"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+                lines.append(f"  📄 {entry.name}  ({size_str})")
+            elif entry.is_dir():
+                lines.append(f"  📁 {entry.name}/")
+        except OSError:
+            continue
+
+    if not lines:
+        await update.message.reply_text("📂 Session workspace files: (empty)")
+        return
 
     header = "📂 Session workspace files:\n"
     body = "\n".join(lines)

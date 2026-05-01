@@ -1,8 +1,6 @@
 """Integration tests for command handlers in src/handlers/commands.py."""
 
-import io
 import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 MODULE = "src.handlers.commands"
@@ -172,6 +170,23 @@ class TestSessionCommand:
 
         reply = mock_update.message.reply_text.call_args.args[0]
         assert "empty" in reply
+
+    async def test_session_files_permission_error(self, mock_update, mock_context, mock_service, tmp_path):
+        """/session files shows a readable error when the workspace cannot be listed."""
+        from src.handlers.commands import session_command
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+
+        mock_context.args = ["files"]
+        mock_service.session.workspace_path = tmp_path
+
+        with patch(f"{MODULE}.Path.iterdir", side_effect=PermissionError("denied")):
+            await session_command(mock_update, mock_context)
+
+        reply = mock_update.message.reply_text.call_args.args[0]
+        assert "Error reading session workspace files" in reply
+        assert "denied" in reply
 
     async def test_session_plan_no_workspace(self, mock_update, mock_context, mock_service):
         """/session plan when workspace_path is None."""
