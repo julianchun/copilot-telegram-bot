@@ -48,7 +48,7 @@ async def setup_bot_commands(application):
         BotCommand("share", "Export session to Markdown"),
         BotCommand("usage", "Display session usage metrics"),
         BotCommand("context", "Display model context info"),
-        BotCommand("session", "Show session info & workspace summary"),
+        BotCommand("session", "Session management (info, files, plan)"),
         BotCommand("ls", "Project file tree"),
         BotCommand("cwd", "Show current directory"),
         BotCommand("ping", "Health check"),
