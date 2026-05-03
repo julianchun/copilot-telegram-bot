@@ -182,7 +182,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Conversation history is preserved. |
 | `/clear` | Reset conversation memory. |
 | `/share` | Export full session to Markdown file. |
-| `/session` | Show session info and workspace summary. |
+| `/session` | Session management entry point: info, workspace files, and plan inspection. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/context` | Display model context and token usage info. |
 
@@ -212,6 +212,11 @@ After selecting a project, a **cockpit message** appears with:
   - **Global/Personal:** `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/`
   - **Project-specific:** `.github/skills/`, `.claude/skills/`, `.agents/skills/`, and `skills/`
 - `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
+
+### Session Management
+- `/session` or `/session info` shows the live session summary: session ID, mode, model, request count, workspace path, branch, quota, and usage totals.
+- `/session files` lists artifacts stored in the session workspace `files/` directory when infinite sessions are enabled.
+- `/session plan` shows the current `plan.md` inline, or sends it as a file when it is too large for a Telegram message.
 
 ## 🔧 Under the Hood
 <details>
