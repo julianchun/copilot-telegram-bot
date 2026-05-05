@@ -15,7 +15,7 @@ def _patch_security(mock_service):
         patch(f"{MODULE}.service", mock_service),
         patch(f"{MODULE}.build_main_menu", new_callable=AsyncMock) as mock_menu,
     ):
-        mock_menu.return_value = ("Welcome!", MagicMock(), ("1.0.0", "testuser", "0.2.0"))
+        mock_menu.return_value = ("Welcome!", MagicMock(), ("1.0.0", "testuser", "0.3.0"))
         yield
 
 
@@ -33,7 +33,7 @@ async def test_start_command_sends_menu(mock_update, mock_context):
 async def test_help_command_sends_help(mock_update, mock_context):
     from src.handlers.commands import help_command
 
-    with patch(f"{MODULE}._get_system_info", new_callable=AsyncMock, return_value=("1.0.0", "testuser", "0.2.0")):
+    with patch(f"{MODULE}._get_system_info", new_callable=AsyncMock, return_value=("1.0.0", "testuser", "0.3.0")):
         with patch("src.ui.menus.get_help_content", return_value="help text"):
             await help_command(mock_update, mock_context)
 

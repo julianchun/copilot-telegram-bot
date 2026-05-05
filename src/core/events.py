@@ -28,12 +28,16 @@ class EventHandlerMixin:
             SessionEventType.ASSISTANT_MESSAGE: self._on_assistant_message,
             SessionEventType.TOOL_EXECUTION_START: self._on_tool_start,
             SessionEventType.TOOL_EXECUTION_COMPLETE: self._on_tool_complete,
+            SessionEventType.SUBAGENT_SELECTED: self._on_subagent_selected,
+            SessionEventType.SUBAGENT_DESELECTED: self._on_subagent_deselected,
             SessionEventType.SUBAGENT_STARTED: self._on_subagent_started,
             SessionEventType.SUBAGENT_COMPLETED: self._on_subagent_completed,
+            SessionEventType.SUBAGENT_FAILED: self._on_subagent_failed,
             SessionEventType.SESSION_IDLE: self._on_session_idle,
             SessionEventType.SESSION_ERROR: self._on_session_error,
             SessionEventType.SESSION_USAGE_INFO: self._on_session_usage_info,
             SessionEventType.ASSISTANT_USAGE: self._on_assistant_usage,
+            SessionEventType.SESSION_MODE_CHANGED: self._on_session_mode_changed,
             SessionEventType.SESSION_MODEL_CHANGE: self._on_session_model_change,
             SessionEventType.ASSISTANT_REASONING_DELTA: self._on_reasoning_delta,
             SessionEventType.SESSION_COMPACTION_START: self._on_compaction_start,
@@ -160,6 +164,36 @@ class EventHandlerMixin:
         except Exception as e:
             logger.error(f"Error handling SUBAGENT_COMPLETED: {e}")
 
+    def _on_subagent_selected(self, event):
+        try:
+            display_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
+            self.current_agent = getattr(event.data, 'agent_name', None) or display_name
+            if ctx.status_callback:
+                self._dispatch_async(ctx.status_callback, f"🤖 Agent selected: {display_name}")
+            logger.info(f"SUBAGENT SELECTED: {display_name}")
+        except Exception as e:
+            logger.error(f"Error handling SUBAGENT_SELECTED: {e}")
+
+    def _on_subagent_deselected(self, event):
+        try:
+            self.current_agent = None
+            if ctx.status_callback:
+                self._dispatch_async(ctx.status_callback, "🤖 Returned to default agent")
+            logger.info("SUBAGENT DESELECTED")
+        except Exception as e:
+            logger.error(f"Error handling SUBAGENT_DESELECTED: {e}")
+
+    def _on_subagent_failed(self, event):
+        try:
+            display_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
+            error = getattr(event.data, 'error', None) or "Unknown error"
+            msg = f"❌ {display_name} failed: {truncate_text(error, 100)}"
+            if ctx.status_callback:
+                self._dispatch_async(ctx.status_callback, msg)
+            logger.error(f"SUBAGENT FAILED: {display_name}: {error}")
+        except Exception as e:
+            logger.error(f"Error handling SUBAGENT_FAILED: {e}")
+
     def _on_session_idle(self, event):
         logger.info("⏸️ Session IDLE - Copilot finished")
         # Schedule async task: refresh git info first, then fire callbacks
@@ -196,9 +230,18 @@ class EventHandlerMixin:
             logger.info(f"Model from usage event: {self.current_model}")
         logger.info(f"Assistant Usage Received: {event.data}")
 
+    def _on_session_mode_changed(self, event):
+        new_mode = getattr(event.data, 'new_mode', None)
+        if new_mode:
+            self.current_mode = new_mode
+            logger.info(f"Session mode changed to: {new_mode}")
+        else:
+            logger.info("Session mode changed event received without new_mode field")
+
     def _on_session_model_change(self, event):
         new_model = getattr(event.data, 'new_model', None)
         if new_model:
+            self.current_model = new_model
             logger.info(f"Session model changed to: {new_model}")
         else:
             logger.info("Session model change event received without new_model field")

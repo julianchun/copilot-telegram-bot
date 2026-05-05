@@ -188,26 +188,51 @@ class TestOnSessionEnd:
         assert svc.session_expired is True
 
 
+# ── populate_session_metadata ───────────────────────────────────────────
+
+class TestPopulateSessionMetadata:
+    async def test_populate_session_metadata_uses_direct_lookup(self):
+        svc = FakeService()
+        svc.session_info.session_id = "session-123"
+        meta = MagicMock(summary="Test Session", startTime="2026-05-03T00:00:00", modifiedTime="2026-05-03T00:01:00")
+        svc.client.get_session_metadata = AsyncMock(return_value=meta)
+
+        await svc.populate_session_metadata()
+
+        svc.client.get_session_metadata.assert_awaited_once_with("session-123")
+        assert svc.session_info.name == "Test Session"
+        assert svc.session_info.created == "2026-05-03T00:00:00"
+        assert svc.session_info.modified == "2026-05-03T00:01:00"
+
+
 # ── _create_session ──────────────────────────────────────────────────
 
 class TestCreateSession:
-    async def test_create_session_registers_project_skill_roots_even_if_missing(self, tmp_path):
+    async def test_create_session_registers_cli_compatible_skill_roots(self, tmp_path):
         svc = FakeService()
         svc.client.create_session = AsyncMock(return_value=MagicMock())
+        fake_home = tmp_path / "home"
 
-        with patch("src.core.session.ctx.root_path", str(tmp_path)):
+        with (
+            patch("src.core.session.ctx.root_path", str(tmp_path)),
+            patch("src.core.session.Path.home", return_value=fake_home),
+        ):
             await svc._create_session()
 
         skill_dirs = svc.client.create_session.await_args.kwargs["skill_directories"]
+        assert str(fake_home / ".copilot" / "skills") in skill_dirs
+        assert str(fake_home / ".agents" / "skills") in skill_dirs
         assert str(tmp_path / ".github" / "skills") in skill_dirs
-        assert str(tmp_path / "skills") in skill_dirs
+        assert str(tmp_path / ".claude" / "skills") in skill_dirs
+        assert str(tmp_path / ".agents" / "skills") in skill_dirs
+        assert str(tmp_path / "skills") not in skill_dirs
+        assert str(fake_home / ".claude" / "skills") not in skill_dirs
 
-    async def test_create_session_keeps_skill_directories_unique(self, tmp_path):
+    async def test_create_session_enables_config_discovery(self, tmp_path):
         svc = FakeService()
         svc.client.create_session = AsyncMock(return_value=MagicMock())
 
         with patch("src.core.session.ctx.root_path", str(tmp_path)):
             await svc._create_session()
 
-        skill_dirs = svc.client.create_session.await_args.kwargs["skill_directories"]
-        assert len(skill_dirs) == len(set(skill_dirs))
+        assert svc.client.create_session.await_args.kwargs["enable_config_discovery"] is True

@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `/agent` command to list, select, deselect, and reload specialized custom agents from `.agent.md` files.
 - `/autopilot` command for highly autonomous execution mode (best paired with `/allowall`).
 - `/session files` and `/session plan` subcommands to inspect session workspace artifacts and the active session plan when infinite sessions are enabled.
-- `/skills` command to list and reload reusable prompt modules from global (`~/.copilot/skills/`, etc.) and project-specific (`.github/skills/`, `skills/`) directories.
+- `/skills` command to list and reload reusable prompt modules from Copilot CLI-compatible skill roots.
 - `/instructions` and `/init` commands to view, clear, or auto-generate project-specific instructions (`.github/copilot-instructions.md`).
 - `/allowall` command to toggle auto-approval for tool permission prompts.
 - `/ping` command for a quick health check of the bot, session, and SDK RPC state.
@@ -21,10 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - System message `"customize"` mode with `tone` section override for Telegram-specific formatting
 
 ### Changed
+- Upgraded `github-copilot-sdk` from v0.2.0 to v0.3.0.
 - Migrated Plan/Edit/Autopilot mode switching to use the native SDK Mode API (`session.rpc.mode.set()`), cleanly separating modes from custom agents.
 - Refactored `/session` into a session-management entry point: `/session` and `/session info` show the full session summary, while `/session files` lists workspace files and `/session plan` renders `plan.md` inline or as an attachment when needed.
-- Aligned skill discovery directories with official GitHub Copilot Agent paths.
-- Upgraded `github-copilot-sdk` from v0.1.30 to v0.2.0
+- Session metadata lookup now uses `get_session_metadata()` instead of scanning `list_sessions()`.
+- Session creation now combines SDK config discovery with explicit Copilot CLI-compatible `skill_directories` so `.claude/skills`, `.agents/skills`, and personal skill folders load like the CLI.
 - `CopilotClient` constructor now uses `SubprocessConfig` dataclass
 - `create_session()` / `resume_session()` use keyword arguments instead of config dict
 - `send_and_wait()` takes positional `prompt` string instead of dict

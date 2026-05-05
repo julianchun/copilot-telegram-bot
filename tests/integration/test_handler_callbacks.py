@@ -87,7 +87,7 @@ def test_build_project_selected_message(mock_context):
     mock_context.user_data = {
         "auth": "testuser",
         "cli_version": "1.0.0",
-        "sdk_version": "0.2.0",
+        "sdk_version": "0.3.0",
     }
 
     from src.handlers.callbacks import _build_project_selected_message
@@ -97,7 +97,7 @@ def test_build_project_selected_message(mock_context):
     assert "Copilot CLI-Telegram" in result
     assert "testuser" in result
     assert "1.0.0" in result
-    assert "0.2.0" in result
+    assert "0.3.0" in result
     assert "Created: my-project" in result
 
 

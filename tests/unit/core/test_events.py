@@ -19,6 +19,7 @@ class FakeService(EventHandlerMixin):
         self._tool_call_names = {}
         self.completion_callback = None
         self.current_model = "gpt-4.1"
+        self.current_agent = None
         self.last_assistant_usage = None
         self.last_session_usage = None
         self.session_info = MagicMock()
@@ -49,12 +50,16 @@ class TestBuildHandlerMap:
             SessionEventType.ASSISTANT_MESSAGE,
             SessionEventType.TOOL_EXECUTION_START,
             SessionEventType.TOOL_EXECUTION_COMPLETE,
+            SessionEventType.SUBAGENT_SELECTED,
+            SessionEventType.SUBAGENT_DESELECTED,
             SessionEventType.SUBAGENT_STARTED,
             SessionEventType.SUBAGENT_COMPLETED,
+            SessionEventType.SUBAGENT_FAILED,
             SessionEventType.SESSION_IDLE,
             SessionEventType.SESSION_ERROR,
             SessionEventType.SESSION_USAGE_INFO,
             SessionEventType.ASSISTANT_USAGE,
+            SessionEventType.SESSION_MODE_CHANGED,
             SessionEventType.SESSION_MODEL_CHANGE,
             SessionEventType.ASSISTANT_REASONING_DELTA,
             SessionEventType.SESSION_COMPACTION_START,
@@ -278,6 +283,78 @@ class TestOnAssistantUsage:
         svc._on_assistant_usage(event)
 
         assert svc.current_model == "gpt-4.1"
+
+
+class TestOnSessionModeChanged:
+    def test_updates_current_mode(self):
+        svc = FakeService()
+        event = _make_event(SessionEventType.SESSION_MODE_CHANGED, new_mode="plan")
+
+        svc._on_session_mode_changed(event)
+
+        assert svc.current_mode == "plan"
+
+
+class TestOnSessionModelChange:
+    def test_updates_current_model(self):
+        svc = FakeService()
+        event = _make_event(SessionEventType.SESSION_MODEL_CHANGE, new_model="claude-sonnet-4")
+
+        svc._on_session_model_change(event)
+
+        assert svc.current_model == "claude-sonnet-4"
+
+
+class TestSubagentLifecycleEvents:
+    @patch("src.core.events.ctx")
+    async def test_selected_updates_current_agent(self, mock_ctx):
+        svc = FakeService()
+        status_cb = AsyncMock()
+        mock_ctx.status_callback = status_cb
+        event = _make_event(
+            SessionEventType.SUBAGENT_SELECTED,
+            agent_name="planner",
+            agent_display_name="Planner",
+        )
+
+        svc._on_subagent_selected(event)
+
+        await asyncio.sleep(0)
+        assert svc.current_agent == "planner"
+        status_cb.assert_awaited_once_with("🤖 Agent selected: Planner")
+
+    @patch("src.core.events.ctx")
+    async def test_deselected_clears_current_agent(self, mock_ctx):
+        svc = FakeService()
+        svc.current_agent = "planner"
+        status_cb = AsyncMock()
+        mock_ctx.status_callback = status_cb
+        event = _make_event(SessionEventType.SUBAGENT_DESELECTED)
+
+        svc._on_subagent_deselected(event)
+
+        await asyncio.sleep(0)
+        assert svc.current_agent is None
+        status_cb.assert_awaited_once_with("🤖 Returned to default agent")
+
+    @patch("src.core.events.ctx")
+    async def test_failed_dispatches_error_status(self, mock_ctx):
+        svc = FakeService()
+        status_cb = AsyncMock()
+        mock_ctx.status_callback = status_cb
+        event = _make_event(
+            SessionEventType.SUBAGENT_FAILED,
+            agent_name="planner",
+            agent_display_name="Planner",
+            error="tool exploded",
+        )
+
+        svc._on_subagent_failed(event)
+
+        await asyncio.sleep(0)
+        msg = status_cb.call_args.args[0]
+        assert "Planner" in msg
+        assert "tool exploded" in msg
 
 
 class TestOnContextChanged:

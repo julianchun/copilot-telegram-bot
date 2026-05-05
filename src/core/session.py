@@ -5,6 +5,7 @@ import time
 import uuid
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from src.config import (
@@ -16,7 +17,7 @@ from src.config import (
 from src.core.context import ctx
 from src.core.usage import SessionUsageTracker, SessionInfo
 
-from copilot import PermissionHandler
+from copilot.session import PermissionHandler
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,28 @@ class SessionMixin:
       _tool_call_names, _chat_lock, last_session_usage, last_assistant_usage,
       _handle_event (from EventHandlerMixin), cleanup_temp_dir
     """
+
+    def _build_cli_compatible_skill_directories(self) -> list[str]:
+        """Return skill roots that match documented Copilot CLI locations."""
+        skill_dirs: list[str] = []
+
+        home_dir = Path.home()
+        for global_candidate in [
+            home_dir / ".copilot" / "skills",
+            home_dir / ".agents" / "skills",
+        ]:
+            skill_dirs.append(str(global_candidate))
+
+        if ctx.root_path:
+            project_root = Path(ctx.root_path)
+            for candidate in [
+                project_root / ".github" / "skills",
+                project_root / ".claude" / "skills",
+                project_root / ".agents" / "skills",
+            ]:
+                skill_dirs.append(str(candidate))
+
+        return list(dict.fromkeys(skill_dirs))
 
     # ── Public lifecycle ──────────────────────────────────────────────
 
@@ -129,8 +152,8 @@ class SessionMixin:
     async def change_model(self, model: str, reasoning_effort: str = None):
         """Change model and/or reasoning_effort without losing conversation history.
 
-        Uses session.set_model() (v0.2.0+) which supports both model and
-        reasoning_effort and preserves conversation history in-place.
+        Uses session.set_model(), which supports both model and
+        reasoning_effort while preserving conversation history in-place.
         """
         reasoning_effort_changed = reasoning_effort != self.current_reasoning_effort
         model_changed = model != self.current_model
@@ -156,24 +179,20 @@ class SessionMixin:
             await self.reset_session(model)
 
     async def populate_session_metadata(self):
-        """Fetch session metadata (name, created, modified) from client.list_sessions()."""
+        """Fetch session metadata (name, created, modified) by session ID."""
         if not self.session_info.session_id:
             logger.warning("No session_id available to fetch metadata")
             return
 
         try:
-            sessions = await self.client.list_sessions()
-            meta = next(
-                (s for s in sessions if getattr(s, 'sessionId', None) == self.session_info.session_id),
-                None,
-            )
+            meta = await self.client.get_session_metadata(self.session_info.session_id)
             if meta:
                 self.session_info.name = getattr(meta, 'summary', None)
                 self.session_info.created = getattr(meta, 'startTime', None)
                 self.session_info.modified = getattr(meta, 'modifiedTime', None)
                 logger.info(f"📊 Session metadata fetched - Name: {self.session_info.name}, Created: {self.session_info.created}")
             else:
-                logger.warning(f"Session {self.session_info.session_id} not found in list_sessions()")
+                logger.warning(f"Session {self.session_info.session_id} not found via get_session_metadata()")
         except Exception as e:
             logger.warning(f"Failed to fetch session metadata: {e}")
 
@@ -217,42 +236,11 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
-        from pathlib import Path
         from src.core.tools import list_files, read_file
 
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
-
-        # Build skill directories: bot-level + global + project-level
-        skill_dirs = []
-        
-        bot_skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
-        if bot_skills_dir.exists():
-            skill_dirs.append(str(bot_skills_dir))
-        
-        home_dir = Path.home()
-        for global_candidate in [
-            home_dir / ".copilot" / "skills",
-            home_dir / ".claude" / "skills",
-            home_dir / ".agents" / "skills",
-        ]:
-            if global_candidate.exists():
-                skill_dirs.append(str(global_candidate))
-
-        if ctx.root_path:
-            project_root = Path(ctx.root_path)
-            for candidate in [
-                project_root / ".github" / "skills",
-                project_root / ".claude" / "skills",
-                project_root / ".agents" / "skills",
-                project_root / "skills",
-            ]:
-                # Always include project-level candidates so /skills reload
-                # works if the user creates the folder mid-session.
-                skill_dirs.append(str(candidate))
-
-        # Preserve order while avoiding duplicate roots.
-        skill_dirs = list(dict.fromkeys(skill_dirs))
+        skill_dirs = self._build_cli_compatible_skill_directories()
 
         self.session = await self.client.create_session(
             on_permission_request=PermissionHandler.approve_all,
@@ -282,6 +270,7 @@ class SessionMixin:
             },
             reasoning_effort=self.current_reasoning_effort,
             on_event=self._handle_event,
+            enable_config_discovery=True,
             mcp_servers=MCP_SERVERS,
             skill_directories=skill_dirs,
         )
