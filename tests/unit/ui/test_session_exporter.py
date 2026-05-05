@@ -104,3 +104,30 @@ class TestFormatModelChangeSynthesis:
         ]
         result = format_session_markdown(events, _metadata())
         assert "Model changed to: claude-sonnet-4" in result
+
+
+class TestFormatExplicitSdkEvents:
+    def test_format_explicit_model_change(self):
+        events = [
+            make_event(SessionEventType.USER_MESSAGE, content="hi"),
+            make_event(SessionEventType.SESSION_MODEL_CHANGE, new_model="claude-sonnet-4"),
+        ]
+
+        result = format_session_markdown(events, _metadata())
+
+        assert "Model changed to: claude-sonnet-4" in result
+
+    def test_format_mode_and_agent_events(self):
+        events = [
+            make_event(SessionEventType.SESSION_MODE_CHANGED, new_mode="plan"),
+            make_event(SessionEventType.SUBAGENT_SELECTED, agent_display_name="Planner", agent_name="planner"),
+            make_event(SessionEventType.SUBAGENT_FAILED, agent_display_name="Planner", agent_name="planner", error="tool exploded"),
+            make_event(SessionEventType.SUBAGENT_DESELECTED),
+        ]
+
+        result = format_session_markdown(events, _metadata())
+
+        assert "Mode changed to: plan" in result
+        assert "Agent selected: Planner" in result
+        assert "Planner failed: tool exploded" in result
+        assert "Returned to default agent" in result

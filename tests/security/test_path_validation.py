@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 import pytest
-from copilot.types import ToolInvocation
+from copilot.tools import ToolInvocation
 
 from src.core.context import ctx
 from src.core.tools import list_files, read_file

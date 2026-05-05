@@ -5,7 +5,7 @@
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![SDK](https://img.shields.io/badge/Copilot_SDK-v0.2.0-black)
+![SDK](https://img.shields.io/badge/Copilot_SDK-v0.3.0-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -16,7 +16,7 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 ### 🤖 Flexible AI Behaviors (Modes, Agents, & Skills)
 - **3 Native Operation Modes:** Switch instantly between **Edit** (coding), **Plan** (architecting), and **Autopilot** (autonomous execution) while preserving your conversation history.
 - **Custom Agents:** Load and switch between specialized agents (`/agent`) tailored for specific tasks, independent of your current mode.
-- **Skills System:** Load reusable prompt modules from `skills/` directories globally or per-project to extend Copilot's capabilities (`/skills`).
+- **Skills System:** Load reusable prompt modules from Copilot CLI-compatible skill roots, including `.github/skills`, `.claude/skills`, `.agents/skills`, `~/.copilot/skills`, and `~/.agents/skills` (`/skills`).
 - **Project Instructions:** Native support for `.github/copilot-instructions.md` with inline actions to view, clear, or auto-generate them based on project analysis (`/instructions`).
 
 ### 📱 Mobile-First UX
@@ -192,7 +192,7 @@ After selecting a project, a **cockpit message** appears with:
 | `/allowall` | Toggle auto-approval for tool permission prompts in the current session. |
 | `/instructions` | Show custom instruction status and inline actions for view, clear, and generate. |
 | `/init` | Ask Copilot to generate `.github/copilot-instructions.md` for the active project. |
-| `/skills` | List skills, inspect a skill, or reload skills from registered skill roots. |
+| `/skills` | List skills, inspect a skill, or reload skills from SDK-discovered roots. |
 
 **System & Files**
 | Command | Description |
@@ -208,10 +208,10 @@ After selecting a project, a **cockpit message** appears with:
 - `Clear` removes the file and recreates the session so the absence of instructions applies immediately.
 
 ### Skills
-- The bot loads skills from the following directories:
-  - **Global/Personal:** `~/.copilot/skills/`, `~/.claude/skills/`, `~/.agents/skills/`
-  - **Project-specific:** `.github/skills/`, `.claude/skills/`, `.agents/skills/`, and `skills/`
-- `/skills reload` asks the SDK to rescan those registered roots, which lets newly added project skill folders show up without reselecting the project.
+- The bot enables SDK config discovery and also registers the Copilot CLI-compatible skill roots explicitly.
+- Project skills are loaded from `.github/skills`, `.claude/skills`, and `.agents/skills` in the active workspace.
+- Personal skills are loaded from `~/.copilot/skills` and `~/.agents/skills`.
+- `/skills reload` asks the SDK to rescan those roots so newly added skills show up without reselecting the project.
 
 ### Session Management
 - `/session` or `/session info` shows the live session summary: session ID, mode, model, request count, workspace path, branch, quota, and usage totals.
@@ -222,7 +222,7 @@ After selecting a project, a **cockpit message** appears with:
 <details>
 <summary><strong>Click to expand technical details</strong></summary>
 
-This bot is built on top of the **`github-copilot-sdk` v0.2.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
+This bot is built on top of the **`github-copilot-sdk` v0.3.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
 - **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
 - **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
@@ -307,5 +307,4 @@ Three-layer, event-driven design under [src/](src/):
 
 
 ## License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT

@@ -38,8 +38,12 @@ def format_session_markdown(events: List[SessionEvent], metadata: Dict[str, Any]
         SessionEventType.ASSISTANT_MESSAGE,
         SessionEventType.TOOL_EXECUTION_START,
         SessionEventType.TOOL_EXECUTION_COMPLETE,
+        SessionEventType.SESSION_MODE_CHANGED,
+        SessionEventType.SUBAGENT_SELECTED,
+        SessionEventType.SUBAGENT_DESELECTED,
         SessionEventType.SUBAGENT_STARTED,
         SessionEventType.SUBAGENT_COMPLETED,
+        SessionEventType.SUBAGENT_FAILED,
         SessionEventType.SESSION_MODEL_CHANGE,
         SessionEventType.SESSION_INFO,
     }
@@ -63,6 +67,8 @@ def format_session_markdown(events: List[SessionEvent], metadata: Dict[str, Any]
                     filtered_events.append(('model_change', event, model))
             continue
         
+        if event.type == SessionEventType.SESSION_MODEL_CHANGE:
+            last_model = getattr(event.data, 'new_model', None) or last_model
         filtered_events.append(('event', event, None))
     
     # Calculate session duration from first to last event
@@ -193,10 +199,35 @@ def format_session_markdown(events: List[SessionEvent], metadata: Dict[str, Any]
             lines.append("### ℹ️ Info")
             lines.append("")
             lines.append(f"✓ {agent_name} completed")
+
+        elif event.type == SessionEventType.SUBAGENT_FAILED:
+            agent_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
+            error = getattr(event.data, 'error', '') or "Unknown error"
+            lines.append("### ℹ️ Info")
+            lines.append("")
+            lines.append(f"❌ {agent_name} failed: {error}")
+
+        elif event.type == SessionEventType.SUBAGENT_SELECTED:
+            agent_name = getattr(event.data, 'agent_display_name', None) or getattr(event.data, 'agent_name', 'Agent')
+            lines.append("### ℹ️ Info")
+            lines.append("")
+            lines.append(f"🤖 Agent selected: {agent_name}")
+
+        elif event.type == SessionEventType.SUBAGENT_DESELECTED:
+            lines.append("### ℹ️ Info")
+            lines.append("")
+            lines.append("🤖 Returned to default agent")
+
+        elif event.type == SessionEventType.SESSION_MODE_CHANGED:
+            mode = getattr(event.data, 'new_mode', None)
+            if mode:
+                lines.append("### ℹ️ Info")
+                lines.append("")
+                lines.append(f"Mode changed to: {mode}")
             
         elif event.type == SessionEventType.SESSION_MODEL_CHANGE:
             # Explicit model change event
-            model = getattr(event.data, 'model', None)
+            model = getattr(event.data, 'new_model', None)
             if model:
                 lines.append("### ℹ️ Info")
                 lines.append("")

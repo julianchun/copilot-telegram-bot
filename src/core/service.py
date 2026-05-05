@@ -449,9 +449,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.current_mode = mode
             return True
         try:
-            from copilot.generated.rpc import SessionModeSetParams, Mode
+            from copilot.generated.rpc import ModeSetRequest, SessionMode
             await self.session.rpc.mode.set(
-                SessionModeSetParams(mode=Mode(mode))
+                ModeSetRequest(mode=SessionMode(mode))
             )
             self.current_mode = mode
             return True
@@ -498,9 +498,9 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             self.current_agent = name
             return True
         try:
-            from copilot.generated.rpc import SessionAgentSelectParams
+            from copilot.generated.rpc import AgentSelectRequest
             await self.session.rpc.agent.select(
-                SessionAgentSelectParams(name=name)
+                AgentSelectRequest(name=name)
             )
             self.current_agent = name
             return True
