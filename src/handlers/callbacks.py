@@ -62,9 +62,19 @@ async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYP
     await message.reply_text(cockpit)
 
 
+def _build_project_menu(context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    from src.ui.menus import get_project_menu, get_start_splash_content
+
+    auth = context.user_data.get("auth", "Unknown")
+    cli_version = context.user_data.get("cli_version", "Unknown")
+    sdk_version = context.user_data.get("sdk_version", "Unknown")
+    header = get_start_splash_content(auth, cli_version, sdk_version)
+    return get_project_menu(WORKSPACE_PATH, header, page=page)
+
+
 async def _handle_interaction_callback(query, update, context):
     """Handle perm: and input: callback queries."""
-    parts = query.data.split(":")
+    parts = query.data.split(":", 2)
     action_type = parts[0]
     interaction_id = parts[1]
     value = parts[2] if len(parts) > 2 else None
@@ -81,8 +91,10 @@ async def _handle_interaction_callback(query, update, context):
     if isinstance(interaction_data, dict):
         future = interaction_data.get("future")
         options = interaction_data.get("options", [])
+        prompt = interaction_data.get("prompt", "")
+        allow_freeform = interaction_data.get("allow_freeform", True)
         logger.info(f"📦 Found interaction data | Future done: {future.done() if future else 'None'} | Options: {options}")
-        if value and value.isdigit() and options:
+        if action_type == "input" and value and value.isdigit() and options:
             index = int(value)
             if 0 <= index < len(options):
                 value = str(options[index])
@@ -103,7 +115,26 @@ async def _handle_interaction_callback(query, update, context):
                 action_text = "Allow" if value == "allow" else "Deny"
                 decision_line = f"🛡️ Permission: {tool_name} → {action_text} {action_emoji}"
                 await query.edit_message_text(decision_line)
+            elif action_type == "input_page":
+                from src.ui.menus import get_input_selection_menu
+
+                page = int(value or 0)
+                text, keyboard = get_input_selection_menu(
+                    prompt,
+                    options,
+                    interaction_id,
+                    allow_freeform=allow_freeform,
+                    page=page,
+                )
+                await query.edit_message_text(text, reply_markup=keyboard)
+                return
             elif action_type == "input":
+                if value == "cancel":
+                    logger.info(f"❌ Cancelling input interaction {interaction_id}")
+                    future.set_result("cancel")
+                    await query.edit_message_text("❌ Selection cancelled.")
+                    PENDING_INTERACTIONS.pop(interaction_id, None)
+                    return
                 logger.info(f"✅ Resolving input future with: {value}")
                 future.set_result(value)
                 await query.edit_message_text(f"❓ Selected: {value}")
@@ -121,17 +152,36 @@ async def _handle_interaction_callback(query, update, context):
 async def _handle_model_callback(query, context):
     """Handle model: callback queries."""
     model = query.data.split(":")[1]
+    if model == "__cancel__":
+        await query.edit_message_text("❌ Model selection cancelled.")
+        return
     model_info = next((m for m in service._models_cache if m["id"] == model), None)
     if model_info and model_info.get("supports_reasoning") and model_info.get("supported_efforts"):
-        from src.ui.menus import get_reasoning_keyboard
-        keyboard = get_reasoning_keyboard(model, model_info["supported_efforts"], model_info.get("default_effort"))
+        from src.ui.menus import get_reasoning_menu
+
+        text, keyboard = get_reasoning_menu(
+            model,
+            model_info["supported_efforts"],
+            default_effort=model_info.get("default_effort"),
+            current_effort=service.current_reasoning_effort,
+        )
         await query.edit_message_text(
-            f"🤖 Model: {model}\n⚠️ Session will be reset (history cleared)\n\nSelect reasoning effort:",
+            text,
             reply_markup=keyboard,
         )
     else:
         await service.change_model(model)
         await query.edit_message_text(f"✅ Model: {model}")
+
+
+async def _handle_model_page_callback(query, context):
+    """Handle model_page: callback queries."""
+    from src.ui.menus import get_model_menu
+
+    page = int(query.data.split(":")[1])
+    models = service._models_cache or await service.get_available_models()
+    text, keyboard = get_model_menu(models, current_model=service.current_model, page=page)
+    await query.edit_message_text(text, reply_markup=keyboard)
 
 
 async def _handle_reasoning_callback(query, context):
@@ -152,19 +202,44 @@ async def _handle_reasoning_callback(query, context):
     )
 
 
+async def _handle_reasoning_page_callback(query, context):
+    """Handle reasoning_page: callback queries."""
+    from src.ui.menus import get_reasoning_menu
+
+    _, model, page_value = query.data.split(":", 2)
+    page = int(page_value)
+    model_info = next((m for m in service._models_cache if m["id"] == model), None)
+    if not model_info:
+        models = service._models_cache or await service.get_available_models()
+        model_info = next((m for m in models if m["id"] == model), None)
+    if not model_info:
+        await query.edit_message_text(f"⚠️ Model not found: {model}")
+        return
+
+    text, keyboard = get_reasoning_menu(
+        model,
+        model_info.get("supported_efforts", []),
+        default_effort=model_info.get("default_effort"),
+        current_effort=service.current_reasoning_effort,
+        page=page,
+    )
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
 async def _handle_agent_callback(query, context):
     """Handle agent: callback queries (agent selection keyboard)."""
-    from src.ui.menus import get_agent_keyboard
     name = query.data.split(":", 1)[1]
 
     if name == "__reload__":
+        from src.ui.menus import get_agent_menu
+
         agents = await service.reload_agents()
         current = await service.get_current_agent()
         try:
             from telegram.error import BadRequest
             if agents:
-                keyboard = get_agent_keyboard(agents, current)
-                await query.edit_message_text("🔄 Agents reloaded. Select an agent:", reply_markup=keyboard)
+                text, keyboard = get_agent_menu(agents, current)
+                await query.edit_message_text(text, reply_markup=keyboard)
             else:
                 await query.edit_message_text("🔄 Agents reloaded. No custom agents found.")
         except BadRequest as e:
@@ -185,6 +260,43 @@ async def _handle_agent_callback(query, context):
         await query.edit_message_text(f"⚠️ Failed to select agent: {name}")
 
 
+async def _handle_agent_page_callback(query, context):
+    """Handle agent_page: callback queries."""
+    from src.ui.menus import get_agent_menu
+
+    page = int(query.data.split(":")[1])
+    agents = await service.list_agents()
+    current = await service.get_current_agent()
+    if not agents:
+        await query.edit_message_text("🤖 No custom agents found.")
+        return
+
+    text, keyboard = get_agent_menu(agents, current, page=page)
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def _handle_project_selection_callback(query, context):
+    """Handle projsel: callback queries."""
+    from src.ui.menus import get_project_entries
+
+    try:
+        selection_index = int(query.data.split(":")[1])
+        entries = get_project_entries(WORKSPACE_PATH)
+        if selection_index < 0 or selection_index >= len(entries):
+            await query.message.reply_text("⚠️ Invalid project selection.")
+            return
+        await _switch_project(entries[selection_index].path, query.message, context, query=query)
+    except Exception as e:
+        logger.error(f"Project Switch Failed: {e}")
+        await query.message.reply_text(f"⚠️ Failed to switch project: {e}")
+
+
+async def _handle_project_page_callback(query, context):
+    """Handle projpage: callback queries."""
+    page = int(query.data.split(":")[1])
+    text, keyboard = _build_project_menu(context, page=page)
+    await query.edit_message_text(text, reply_markup=keyboard)
+
 
 async def _handle_project_callback(query, context):
     """Handle proj: callback queries."""
@@ -202,7 +314,7 @@ async def _handle_granted_project_callback(query, context):
     from src.config import GRANTED_PROJECT_PATHS
     try:
         idx = int(query.data.split(":")[1])
-        if idx >= len(GRANTED_PROJECT_PATHS):
+        if idx < 0 or idx >= len(GRANTED_PROJECT_PATHS):
             await query.message.reply_text("⚠️ Invalid project index.")
             return
         path = GRANTED_PROJECT_PATHS[idx]
@@ -278,17 +390,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     try:
-        if data.startswith("perm:") or data.startswith("input:"):
+        if data.startswith("perm:") or data.startswith("input:") or data.startswith("input_page:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("agent_page:"):
+            await _handle_agent_page_callback(query, context)
         elif data.startswith("agent:"):
             await _handle_agent_callback(query, context)
+        elif data.startswith("model_page:"):
+            await _handle_model_page_callback(query, context)
         elif data.startswith("model:"):
             await _handle_model_callback(query, context)
+        elif data.startswith("reasoning_page:"):
+            await _handle_reasoning_page_callback(query, context)
         elif data.startswith("reasoning:"):
             await _handle_reasoning_callback(query, context)
         elif data.startswith("instr:"):
             await _handle_instructions_callback(query, update, context)
+        elif data.startswith("projpage:"):
+            await _handle_project_page_callback(query, context)
+            return ConversationHandler.END
+        elif data.startswith("projsel:"):
+            await _handle_project_selection_callback(query, context)
+            return ConversationHandler.END
         elif data.startswith("proj_granted:"):
             await _handle_granted_project_callback(query, context)
             return ConversationHandler.END

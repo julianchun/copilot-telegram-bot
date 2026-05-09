@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 PENDING_INTERACTIONS: dict[str, dict[str, Any]] = {}
 INTERACTION_TTL = INTERACTION_TIMEOUT  # matches send_and_wait timeout
 
+
+def _get_update_chat_id(update: Update | None) -> int | None:
+    message = update.effective_message if update else None
+    chat = getattr(message, "chat", None)
+    return getattr(chat, "id", None)
+
 def cleanup_pending_interactions():
     """Removes interactions that are older than INTERACTION_TTL."""
     now = time.time()
@@ -46,6 +52,69 @@ def cleanup_pending_interactions():
     if to_remove:
         logger.info(f"Cleaned up {len(to_remove)} pending interactions")
 
+
+def _find_pending_input_interaction(chat_id: int | None) -> tuple[str, dict[str, Any]] | tuple[None, None]:
+    if chat_id is None:
+        return None, None
+
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for interaction_id, data in PENDING_INTERACTIONS.items():
+        if not isinstance(data, dict):
+            continue
+        future = data.get("future")
+        if data.get("kind") != "input" or data.get("chat_id") != chat_id:
+            continue
+        if not future or future.done():
+            continue
+        candidates.append((interaction_id, data))
+
+    if not candidates:
+        return None, None
+
+    return max(candidates, key=lambda item: item[1].get("timestamp", 0))
+
+
+def _normalize_pending_input_answer(answer: str, options: list[Any]) -> str:
+    text = (answer or "").strip()
+    if text.isdigit():
+        selection_number = int(text)
+        if 1 <= selection_number <= len(options):
+            return str(options[selection_number - 1])
+    return text
+
+
+async def _try_handle_pending_input_reply(update: Update) -> bool:
+    cleanup_pending_interactions()
+
+    message = update.message
+    if not message or not getattr(message, "text", None):
+        return False
+
+    interaction_id, interaction_data = _find_pending_input_interaction(_get_update_chat_id(update))
+    if not interaction_id or not interaction_data:
+        return False
+
+    allow_freeform = interaction_data.get("allow_freeform", True)
+    if not allow_freeform:
+        await message.reply_text("⚠️ Please use the selection buttons below.")
+        return True
+
+    options = interaction_data.get("options", []) or []
+    answer = _normalize_pending_input_answer(message.text, options)
+    if not answer:
+        await message.reply_text("⚠️ Please send a text answer or use the buttons below.")
+        return True
+
+    future = interaction_data.get("future")
+    if not future or future.done():
+        PENDING_INTERACTIONS.pop(interaction_id, None)
+        return False
+
+    future.set_result(answer)
+    PENDING_INTERACTIONS.pop(interaction_id, None)
+    await message.reply_text("✅ Answer received.")
+    return True
+
 async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str = None):
     if not await security_check(update): return
     if not await check_project_selected(update): return
@@ -55,6 +124,9 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
     if service.session_expired:
         if reply_target:
             await reply_target.reply_text("⚠️ Session expired. Use /start to begin a new session.")
+        return
+
+    if override_text is None and await _try_handle_pending_input_reply(update):
         return
 
     # Prevent sending while session is busy (feature #5)
@@ -118,7 +190,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         cleanup_pending_interactions()
         interaction_id = str(uuid.uuid4())[:8]
         future = asyncio.get_running_loop().create_future()
-        chat_id = update.effective_chat.id if update and update.effective_chat else None
+        chat_id = _get_update_chat_id(update)
         
         # Store future with metadata
         PENDING_INTERACTIONS[interaction_id] = {
@@ -127,7 +199,9 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             "chat_id": chat_id,
             "context": context,
             "kind": kind,
-            "options": getattr(payload, 'options', []) if kind == "input" else None
+            "options": getattr(payload, 'options', []) if kind == "input" else None,
+            "prompt": getattr(payload, 'message', str(payload)) if kind == "input" else None,
+            "allow_freeform": getattr(payload, "allowFreeform", True) if kind == "input" else False,
         }
         
         logger.info(f"⚡ Interaction created: {interaction_id} | Kind: {kind} | Chat: {chat_id}")
@@ -149,28 +223,25 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
                 msg_text += "\n\nAllow?"
                 # Store tool_name in interaction_data for later reference
                 PENDING_INTERACTIONS[interaction_id]["tool_name"] = tool_name
-                buttons = [[
+                reply_markup = InlineKeyboardMarkup([[
                     InlineKeyboardButton("✅ Allow", callback_data=f"perm:{interaction_id}:allow"),
                     InlineKeyboardButton("❌ Deny", callback_data=f"perm:{interaction_id}:deny"),
-                ]]
-                await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
+                ]])
+                await _send_interaction_msg(update, context, chat_id, msg_text, reply_markup)
                         
             elif kind == "input":
+                from src.ui.menus import get_input_selection_menu
+
                 prompt = getattr(payload, 'message', str(payload))
                 options = getattr(payload, 'options', [])
-                
-                # Plain text prompt (no markdown)
-                msg_text = f"❓ Copilot Asks:\n{prompt}\n\nSelect an option:"
-                buttons = []
-                for i, opt in enumerate(options):
-                    label = str(opt)
-                    btn_label = (label[:30] + '..') if len(label) > 30 else label
-                    callback_data = f"input:{interaction_id}:{label}"
-                    if len(callback_data.encode('utf-8')) > 64:
-                        callback_data = f"input:{interaction_id}:{i}"
-                    buttons.append([InlineKeyboardButton(btn_label, callback_data=callback_data)])
-                buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=f"input:{interaction_id}:cancel")])
-                await _send_interaction_msg(update, context, chat_id, msg_text, buttons)
+                allow_freeform = getattr(payload, "allowFreeform", True)
+                msg_text, reply_markup = get_input_selection_menu(
+                    prompt,
+                    options,
+                    interaction_id,
+                    allow_freeform=allow_freeform,
+                )
+                await _send_interaction_msg(update, context, chat_id, msg_text, reply_markup)
             
             logger.info(f"⏳ Awaiting user response for interaction {interaction_id}...")
             result = await future
@@ -248,19 +319,18 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
             await reply_target.reply_text(f"⚠️ Error: {str(e)}")
 
 
-async def _send_interaction_msg(update, context, chat_id, text, buttons):
+async def _send_interaction_msg(update, context, chat_id, text, reply_markup):
     """Send an inline-keyboard message, with fallback to context.bot.send_message."""
-    markup = InlineKeyboardMarkup(buttons)
     try:
         msg = update.effective_message if update else None
         if not msg:
             raise ValueError("No effective message available for interaction reply")
-        await msg.reply_text(text, reply_markup=markup)
+        await msg.reply_text(text, reply_markup=reply_markup)
     except Exception as send_err:
         logger.error(f"❌ Failed to send interaction message: {send_err}", exc_info=True)
         if chat_id and context:
             try:
-                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
             except Exception as fallback_err:
                 logger.error(f"❌ Fallback send also failed: {fallback_err}", exc_info=True)
                 raise
