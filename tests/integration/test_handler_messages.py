@@ -194,6 +194,105 @@ class TestChatHandler:
 
         mock_update.effective_message.reply_text.assert_awaited_once_with("⚠️ Error: boom")
 
+    @patch("src.handlers.messages.service")
+    @patch("src.handlers.messages.check_project_selected", new_callable=AsyncMock, return_value=True)
+    @patch("src.handlers.messages.security_check", new_callable=AsyncMock, return_value=True)
+    async def test_chat_handler_resolves_pending_freeform_input(
+        self, mock_sec, mock_proj, mock_svc, mock_update, mock_context
+    ):
+        """Plain text answers should resolve pending ask-user prompts before normal chat flow."""
+        mock_svc.session_expired = False
+        lock = asyncio.Lock()
+        await lock.acquire()
+        mock_svc._chat_lock = lock
+        mock_svc.chat = AsyncMock()
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        PENDING_INTERACTIONS["ask-1"] = {
+            "future": future,
+            "timestamp": time.time(),
+            "chat_id": mock_update.message.chat.id,
+            "kind": "input",
+            "options": [],
+            "allow_freeform": True,
+        }
+
+        try:
+            mock_update.message.text = "My freeform answer"
+            await chat_handler(mock_update, mock_context)
+        finally:
+            lock.release()
+
+        assert future.done()
+        assert future.result() == "My freeform answer"
+        assert "ask-1" not in PENDING_INTERACTIONS
+        mock_svc.chat.assert_not_awaited()
+        mock_update.message.reply_text.assert_awaited_once_with("✅ Answer received.")
+
+    @patch("src.handlers.messages.service")
+    @patch("src.handlers.messages.check_project_selected", new_callable=AsyncMock, return_value=True)
+    @patch("src.handlers.messages.security_check", new_callable=AsyncMock, return_value=True)
+    async def test_chat_handler_maps_numeric_reply_to_choice(
+        self, mock_sec, mock_proj, mock_svc, mock_update, mock_context
+    ):
+        """Typing the displayed choice number should resolve to the full option text."""
+        mock_svc.session_expired = False
+        mock_svc._chat_lock = asyncio.Lock()
+        mock_svc.chat = AsyncMock()
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        PENDING_INTERACTIONS["ask-2"] = {
+            "future": future,
+            "timestamp": time.time(),
+            "chat_id": mock_update.message.chat.id,
+            "kind": "input",
+            "options": ["alpha", "beta"],
+            "allow_freeform": True,
+        }
+
+        mock_update.message.text = "2"
+        await chat_handler(mock_update, mock_context)
+
+        assert future.done()
+        assert future.result() == "beta"
+        mock_svc.chat.assert_not_awaited()
+
+    @patch("src.handlers.messages.service")
+    @patch("src.handlers.messages.check_project_selected", new_callable=AsyncMock, return_value=True)
+    @patch("src.handlers.messages.security_check", new_callable=AsyncMock, return_value=True)
+    async def test_chat_handler_rejects_typed_reply_when_freeform_disabled(
+        self, mock_sec, mock_proj, mock_svc, mock_update, mock_context
+    ):
+        """Choice-only prompts should tell the user to use buttons instead of starting a new chat turn."""
+        mock_svc.session_expired = False
+        lock = asyncio.Lock()
+        await lock.acquire()
+        mock_svc._chat_lock = lock
+        mock_svc.chat = AsyncMock()
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        PENDING_INTERACTIONS["ask-3"] = {
+            "future": future,
+            "timestamp": time.time(),
+            "chat_id": mock_update.message.chat.id,
+            "kind": "input",
+            "options": ["alpha", "beta"],
+            "allow_freeform": False,
+        }
+
+        try:
+            mock_update.message.text = "beta"
+            await chat_handler(mock_update, mock_context)
+        finally:
+            lock.release()
+
+        assert not future.done()
+        mock_svc.chat.assert_not_awaited()
+        mock_update.message.reply_text.assert_awaited_once_with("⚠️ Please use the selection buttons below.")
+
 
 class TestInteractionMessages:
     async def test_send_interaction_msg_uses_effective_message(self, mock_update, mock_context):

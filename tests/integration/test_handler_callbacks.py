@@ -120,6 +120,20 @@ async def test_handle_model_callback_changes_model(
     assert "gpt-4.1" in msg
 
 
+async def test_handle_model_callback_cancel_does_not_change_model(
+    mock_callback_query, mock_context, mock_service
+):
+    """Cancel option closes the model menu without switching models."""
+    mock_callback_query.data = "model:__cancel__"
+
+    from src.handlers.callbacks import _handle_model_callback
+
+    await _handle_model_callback(mock_callback_query, mock_context)
+
+    mock_service.change_model.assert_not_awaited()
+    assert mock_callback_query.edit_message_text.call_args.args[0] == "❌ Model selection cancelled."
+
+
 # --- _handle_interaction_callback ---
 
 
@@ -165,3 +179,86 @@ async def test_handle_interaction_callback_expired(
 
     msg = mock_callback_query.edit_message_text.call_args.args[0]
     assert "expired" in msg.lower() or "already handled" in msg.lower()
+
+
+async def test_handle_interaction_callback_input_selection_by_index(
+    mock_callback_query, mock_update_with_query, mock_context, pending_interactions
+):
+    """input:ID:<index> resolves the future with the full option text."""
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    interaction_id = "input-123"
+    pending_interactions[interaction_id] = {
+        "future": future,
+        "prompt": "Choose one",
+        "options": ["alpha option", "beta option"],
+    }
+
+    mock_callback_query.data = f"input:{interaction_id}:1"
+
+    from src.handlers.callbacks import _handle_interaction_callback
+
+    await _handle_interaction_callback(
+        mock_callback_query, mock_update_with_query, mock_context
+    )
+
+    assert future.done()
+    assert future.result() == "beta option"
+    assert interaction_id not in pending_interactions
+    assert mock_callback_query.edit_message_text.call_args.args[0] == "❓ Selected: beta option"
+    assert mock_callback_query.message.reply_text.call_args.args[0] == "✅ Selected option: beta option"
+
+
+async def test_handle_interaction_callback_input_cancel(
+    mock_callback_query, mock_update_with_query, mock_context, pending_interactions
+):
+    """input:ID:cancel cancels the interaction cleanly."""
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    interaction_id = "input-cancel"
+    pending_interactions[interaction_id] = {
+        "future": future,
+        "prompt": "Choose one",
+        "options": ["alpha option"],
+    }
+
+    mock_callback_query.data = f"input:{interaction_id}:cancel"
+
+    from src.handlers.callbacks import _handle_interaction_callback
+
+    await _handle_interaction_callback(
+        mock_callback_query, mock_update_with_query, mock_context
+    )
+
+    assert future.done()
+    assert future.result() == "cancel"
+    assert interaction_id not in pending_interactions
+    assert mock_callback_query.edit_message_text.call_args.args[0] == "❌ Selection cancelled."
+
+
+async def test_handle_interaction_callback_input_page_rerenders_paginated_menu(
+    mock_callback_query, mock_update_with_query, mock_context, pending_interactions
+):
+    """input_page:ID:<page> re-renders the same interaction without resolving it."""
+    loop = asyncio.get_event_loop()
+    future = loop.create_future()
+    interaction_id = "input-page"
+    pending_interactions[interaction_id] = {
+        "future": future,
+        "prompt": "Choose one",
+        "options": [f"Option {i}" for i in range(1, 11)],
+    }
+
+    mock_callback_query.data = f"input_page:{interaction_id}:1"
+
+    from src.handlers.callbacks import _handle_interaction_callback
+
+    await _handle_interaction_callback(
+        mock_callback_query, mock_update_with_query, mock_context
+    )
+
+    assert not future.done()
+    assert interaction_id in pending_interactions
+    text = mock_callback_query.edit_message_text.call_args.args[0]
+    assert "Page 2/2" in text
+    assert "10. Option 10" in text

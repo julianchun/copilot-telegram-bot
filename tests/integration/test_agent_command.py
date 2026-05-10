@@ -53,6 +53,8 @@ class TestAgentCommand:
         call_kwargs = mock_update.message.reply_text.call_args
         assert "reply_markup" in call_kwargs.kwargs
         assert "Select an agent" in call_kwargs.args[0]
+        assert "1. Default (No Agent)" in call_kwargs.args[0]
+        assert "2. coder" in call_kwargs.args[0]
 
     async def test_agent_select_by_name(self, mock_update, mock_context, mock_service):
         mock_context.args = ["my-agent"]

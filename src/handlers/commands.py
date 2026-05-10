@@ -56,10 +56,10 @@ async def build_main_menu() -> tuple:
     
     Returns (message_text, keyboard, (cli_version, auth, sdk_version)).
     """
-    from src.ui.menus import get_start_splash_content, get_project_keyboard
+    from src.ui.menus import get_start_splash_content, get_project_menu
     cli_version, auth, sdk_version = await _get_system_info()
-    msg = get_start_splash_content(auth, cli_version, sdk_version)
-    keyboard = get_project_keyboard(WORKSPACE_PATH)
+    header = get_start_splash_content(auth, cli_version, sdk_version)
+    msg, keyboard = get_project_menu(WORKSPACE_PATH, header)
     return msg, keyboard, (cli_version, auth, sdk_version)
 
 
@@ -182,7 +182,7 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.ui.menus import get_agent_keyboard
+    from src.ui.menus import get_agent_menu
 
     args = context.args
     if args:
@@ -220,8 +220,8 @@ async def agent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Then run /agent reload"
         )
         return
-    keyboard = get_agent_keyboard(agents, current)
-    await update.message.reply_text("🤖 Select an agent:", reply_markup=keyboard)
+    msg, keyboard = get_agent_menu(agents, current)
+    await update.message.reply_text(msg, reply_markup=keyboard)
 
 async def cwd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
@@ -293,10 +293,10 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     if not await check_project_selected(update): return
-    from src.ui.menus import get_model_keyboard
+    from src.ui.menus import get_model_menu
     msg = await update.message.reply_text("🔄 Fetching models...")
-    keyboard = get_model_keyboard(await service.get_available_models())
-    await msg.edit_text(f"Select a model:", reply_markup=keyboard)
+    text, keyboard = get_model_menu(await service.get_available_models(), current_model=service.current_model)
+    await msg.edit_text(text, reply_markup=keyboard)
 
 async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /skills command with subcommands: list (default), info <name>, reload."""
