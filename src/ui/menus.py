@@ -92,7 +92,7 @@ def _paginate_selection_options(
         return [(0, 0)]
 
     base_lines = _selection_base_lines(header_text)
-    footer = _selection_footer(prompt, 998, 998)
+    footer = _selection_footer(prompt, 98, 99)
     pages: list[tuple[int, int]] = []
     start = 0
 
@@ -390,7 +390,8 @@ def get_reasoning_menu(
     options: list[SelectionOption] = []
     for effort in supported_efforts:
         label = effort_labels.get(effort, effort.capitalize())
-        if default_effort and effort == default_effort:
+        is_default = default_effort and effort == default_effort
+        if is_default:
             label += " (model default)"
         is_selected = current_effort == effort or (
             current_effort is None and default_effort == effort
@@ -398,7 +399,7 @@ def get_reasoning_menu(
         options.append(
             SelectionOption(
                 text=label,
-                callback_data=f"reasoning:{model_id}:{effort}",
+                callback_data=f"reasoning:{model_id}:{'default' if is_default else effort}",
                 selected=is_selected,
             )
         )

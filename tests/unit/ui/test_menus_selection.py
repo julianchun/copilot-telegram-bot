@@ -80,9 +80,9 @@ def test_get_reasoning_menu_hides_reset_warning_and_default_option():
 
     callback_data = [button.callback_data for row in keyboard.inline_keyboard for button in row]
     assert "reasoning:gpt-5.4:low" in callback_data
-    assert "reasoning:gpt-5.4:medium" in callback_data
+    assert "reasoning:gpt-5.4:default" in callback_data
     assert "reasoning:gpt-5.4:high" in callback_data
-    assert "reasoning:gpt-5.4:default" not in callback_data
+    assert "reasoning:gpt-5.4:medium" not in callback_data
 
 
 def test_get_reasoning_menu_marks_explicit_effort_over_model_default():
