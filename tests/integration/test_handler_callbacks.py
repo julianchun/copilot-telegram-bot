@@ -262,3 +262,68 @@ async def test_handle_interaction_callback_input_page_rerenders_paginated_menu(
     text = mock_callback_query.edit_message_text.call_args.args[0]
     assert "Page 2/2" in text
     assert "10. Option 10" in text
+
+
+# --- _handle_plan_callback ---
+
+
+async def test_handle_plan_callback_stale_request_is_blocked(
+    mock_callback_query, mock_context, mock_service
+):
+    """Stale plan callbacks are rejected with an alert."""
+    mock_callback_query.data = "plan:approve:stale-request"
+    mock_service._pending_exit_plan_mode = {"request_id": "active-request"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    mock_callback_query.answer.assert_awaited_once_with(
+        "⚠️ This plan request is no longer active.", show_alert=True
+    )
+    mock_callback_query.edit_message_text.assert_not_awaited()
+
+
+async def test_handle_plan_callback_reject_allows_through_when_no_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Callbacks still work after restart when no pending state is stored."""
+    mock_callback_query.data = "plan:reject:req-1"
+    mock_service._pending_exit_plan_mode = None
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
+
+
+async def test_handle_plan_callback_reject_clears_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Rejecting a plan clears the stored pending request."""
+    mock_callback_query.data = "plan:reject:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
+
+
+async def test_handle_plan_callback_edit_clears_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Requesting a plan edit clears the stored pending request."""
+    mock_callback_query.data = "plan:edit:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan edit requested" in mock_callback_query.edit_message_text.call_args.args[0]

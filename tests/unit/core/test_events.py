@@ -1,6 +1,7 @@
 """Unit tests for EventHandlerMixin (src/core/events.py)."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
@@ -26,6 +27,9 @@ class FakeService(EventHandlerMixin):
         self.usage_tracker = MagicMock()
         self.current_mode = "general"
         self.user_selected_model = None
+        self.telegram_bot = None
+        self.telegram_chat_id = None
+        self._pending_exit_plan_mode = None
 
 
 def _make_event(event_type, **data_attrs):
@@ -65,6 +69,8 @@ class TestBuildHandlerMap:
             SessionEventType.SESSION_COMPACTION_START,
             SessionEventType.SESSION_COMPACTION_COMPLETE,
             SessionEventType.SESSION_CONTEXT_CHANGED,
+            SessionEventType.EXIT_PLAN_MODE_REQUESTED,
+            SessionEventType.EXIT_PLAN_MODE_COMPLETED,
         }
         assert set(handler_map.keys()) == expected_keys
 
@@ -130,6 +136,51 @@ class TestOnAssistantMessage:
 
         await asyncio.sleep(0)
         cb.assert_not_called()
+
+
+class TestExitPlanModeRequested:
+    @patch("src.ui.menus.get_exit_plan_mode_keyboard", return_value="keyboard")
+    async def test_finalize_uses_required_fields(self, _mock_keyboard):
+        svc = FakeService()
+        svc.telegram_bot = MagicMock()
+        svc.telegram_bot.send_message = AsyncMock()
+        svc.telegram_chat_id = 123
+
+        data = SimpleNamespace(
+            request_id="req-1",
+            summary="Summary",
+            plan_content="- Step 1",
+            actions=["approve", "edit"],
+            recommended_action="approve",
+        )
+
+        await svc._finalize_exit_plan_mode_requested(data)
+
+        assert svc._pending_exit_plan_mode == {
+            "request_id": "req-1",
+            "plan_content": "- Step 1",
+            "summary": "Summary",
+        }
+        svc.telegram_bot.send_message.assert_awaited_once()
+
+    @patch("src.ui.menus.get_exit_plan_mode_keyboard", return_value="keyboard")
+    async def test_finalize_missing_required_field_is_caught(self, _mock_keyboard):
+        svc = FakeService()
+        svc.telegram_bot = MagicMock()
+        svc.telegram_bot.send_message = AsyncMock()
+        svc.telegram_chat_id = 123
+
+        data = SimpleNamespace(
+            request_id="req-1",
+            summary="Summary",
+            plan_content="- Step 1",
+            actions=["approve", "edit"],
+        )
+
+        await svc._finalize_exit_plan_mode_requested(data)
+
+        assert svc._pending_exit_plan_mode is None
+        svc.telegram_bot.send_message.assert_not_awaited()
 
 
 class TestOnToolStart:

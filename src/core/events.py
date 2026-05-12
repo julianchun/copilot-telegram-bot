@@ -1,6 +1,7 @@
 """SDK event handler methods for CopilotService (mixin)."""
 
 import asyncio
+import io
 import logging
 
 from copilot.generated.session_events import SessionEventType
@@ -10,13 +11,16 @@ from src.ui.formatters import format_tool_start, format_tool_complete, truncate_
 
 logger = logging.getLogger(__name__)
 
+PLAN_MSG_INLINE_LIMIT = 3000  # chars; longer plans are sent as a document
+
 
 class EventHandlerMixin:
     """Mixin providing SDK event routing and per-type handler methods.
 
     Expects the host class to have:
       current_callback, _tool_call_names, completion_callback,
-      current_model, last_assistant_usage, last_session_usage
+      current_model, last_assistant_usage, last_session_usage,
+      telegram_bot, telegram_chat_id, _pending_exit_plan_mode
     """
 
     # ── Event router ──────────────────────────────────────────────────
@@ -43,6 +47,8 @@ class EventHandlerMixin:
             SessionEventType.SESSION_COMPACTION_START: self._on_compaction_start,
             SessionEventType.SESSION_COMPACTION_COMPLETE: self._on_compaction_complete,
             SessionEventType.SESSION_CONTEXT_CHANGED: self._on_context_changed,
+            SessionEventType.EXIT_PLAN_MODE_REQUESTED: self._on_exit_plan_mode_requested,
+            SessionEventType.EXIT_PLAN_MODE_COMPLETED: self._on_exit_plan_mode_completed,
         }
 
     def _handle_event(self, event):
@@ -276,6 +282,69 @@ class EventHandlerMixin:
             logger.debug(f"📊 Context changed: {token_count}/{max_tokens} tokens")
         except Exception as e:
             logger.debug(f"Context changed event handling failed: {e}")
+
+    def _on_exit_plan_mode_requested(self, event):
+        """Agent finished creating a plan and wants user approval to exit plan mode."""
+        logger.info("📋 exit_plan_mode.requested received")
+        self._dispatch_async(self._finalize_exit_plan_mode_requested, event.data)
+
+    async def _finalize_exit_plan_mode_requested(self, data):
+        """Send plan approval UI to Telegram user."""
+        from src.ui.menus import get_exit_plan_mode_keyboard
+
+        bot = getattr(self, 'telegram_bot', None)
+        chat_id = getattr(self, 'telegram_chat_id', None)
+        if not bot or not chat_id:
+            logger.warning("📋 exit_plan_mode.requested: no bot/chat_id stored, cannot notify user")
+            return
+
+        try:
+            request_id = data.request_id
+            summary = data.summary
+            plan_content = data.plan_content
+            actions = data.actions
+            recommended = data.recommended_action
+
+            self._pending_exit_plan_mode = {
+                'request_id': request_id,
+                'plan_content': plan_content,
+                'summary': summary,
+            }
+
+            keyboard = get_exit_plan_mode_keyboard(request_id)
+            header = "📋 Plan ready for review"
+            if recommended:
+                header += f" (recommended: {recommended})"
+            if actions:
+                header += f"\nActions: {', '.join(actions)}"
+
+            if plan_content and len(plan_content) <= PLAN_MSG_INLINE_LIMIT:
+                msg_text = f"{header}\n\nSummary: {summary}\n\n{plan_content}"
+                await bot.send_message(chat_id=chat_id, text=msg_text, reply_markup=keyboard)
+            elif plan_content:
+                # Plan too long — send summary inline, full content as document
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"{header}\n\nSummary: {summary}",
+                    reply_markup=keyboard,
+                )
+                doc = io.BytesIO(plan_content.encode("utf-8"))
+                doc.name = "plan.md"
+                await bot.send_document(chat_id=chat_id, document=doc, caption="📋 Full plan")
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"{header}\n\nSummary: {summary}",
+                    reply_markup=keyboard,
+                )
+        except Exception as e:
+            logger.error(f"❌ Failed to send exit_plan_mode approval message: {e}", exc_info=True)
+
+    def _on_exit_plan_mode_completed(self, event):
+        """Exit plan mode request was resolved — clear pending state."""
+        request_id = getattr(event.data, 'request_id', '') or ''
+        logger.info(f"📋 exit_plan_mode.completed (request_id={request_id})")
+        self._pending_exit_plan_mode = None
 
     # ── Async dispatch helper ─────────────────────────────────────────
 

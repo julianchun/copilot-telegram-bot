@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _TOOL_ALLOWLIST = frozenset({
     "report_intent", "task", "view", "glob", "grep",
     "fetch_copilot_cli_documentation", "ask_user", "update_todo", "edit",
+    "list_files", "sql"
 })
 
 
