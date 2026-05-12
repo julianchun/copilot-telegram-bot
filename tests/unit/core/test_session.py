@@ -41,6 +41,7 @@ class TestToolAllowlist:
         expected = {
             "report_intent", "task", "view", "glob", "grep",
             "fetch_copilot_cli_documentation", "ask_user", "update_todo", "edit",
+            "list_files", "sql",
         }
         assert _TOOL_ALLOWLIST == expected
 
