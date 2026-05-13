@@ -388,18 +388,21 @@ async def _handle_plan_callback(query, context):
         await query.answer("⚠️ This plan request is no longer active.", show_alert=True)
         return
 
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.error(f"❌ query.answer() failed for plan callback: {e}", exc_info=True)
+
     if action == "approve":
-        from copilot.generated.rpc import ModeSetRequest, SessionMode
-        try:
-            if service.session:
-                await service.session.rpc.mode.set(
-                    ModeSetRequest(mode=SessionMode("interactive"))
-                )
-                service.current_mode = "interactive"
+        if not service.session:
+            await query.edit_message_text("⚠️ No active session. Cannot switch mode.")
+            return
+
+        success = await service.set_mode('interactive')
+        if success:
             await query.edit_message_text("✅ Plan approved! Switched to interactive mode.")
-        except Exception as e:
-            logger.error(f"Failed to switch mode after plan approval: {e}")
-            await query.edit_message_text(f"⚠️ Failed to approve plan: {e}")
+        else:
+            await query.edit_message_text("⚠️ Failed to approve plan: could not switch to interactive mode.")
 
     elif action == "reject":
         service._pending_exit_plan_mode = None
@@ -423,12 +426,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     logger.info(f"🎯 Query data: {query.data}")
 
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
-
     data = query.data
+
+    if not data.startswith("plan:"):
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
 
     try:
         if data.startswith("perm:") or data.startswith("input:") or data.startswith("input_page:"):
