@@ -375,6 +375,51 @@ async def _handle_instructions_callback(query, update, context):
         await chat_handler(update, context, override_text=prompt)
 
 
+async def _handle_plan_callback(query, context):
+    """Handle plan: callback queries (exit_plan_mode approval)."""
+    parts = query.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    request_id = parts[2] if len(parts) > 2 else ""
+
+    logger.info(f"📋 Plan callback: action={action} request_id={request_id}")
+
+    pending = service._pending_exit_plan_mode
+    if pending is not None and pending.get('request_id') != request_id:
+        await query.answer("⚠️ This plan request is no longer active.", show_alert=True)
+        return
+
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.error(f"❌ query.answer() failed for plan callback: {e}", exc_info=True)
+
+    if action == "approve":
+        service._pending_exit_plan_mode = None
+        if not service.session:
+            await query.edit_message_text("⚠️ No active session. Cannot switch mode.")
+            return
+
+        success = await service.set_mode('interactive')
+        if success:
+            await query.edit_message_text("✅ Plan approved! Switched to interactive mode.")
+        else:
+            await query.edit_message_text("⚠️ Failed to approve plan: could not switch to interactive mode.")
+
+    elif action == "reject":
+        service._pending_exit_plan_mode = None
+        await query.edit_message_text("❌ Plan rejected. Still in plan mode — send a message to revise.")
+
+    elif action == "edit":
+        service._pending_exit_plan_mode = None
+        await query.edit_message_text(
+            "📝 Plan edit requested.\n"
+            "Send your feedback as a message and Copilot will revise the plan."
+        )
+
+    else:
+        await query.edit_message_text(f"⚠️ Unknown plan action: {action}")
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await security_check(update): return
     logger.info(f"🎯 button_handler ENTRY - CallbackQuery received")
@@ -382,17 +427,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     logger.info(f"🎯 Query data: {query.data}")
 
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
-
     data = query.data
+
+    if not data.startswith("plan:"):
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.error(f"❌ query.answer() failed: {e}", exc_info=True)
 
     try:
         if data.startswith("perm:") or data.startswith("input:") or data.startswith("input_page:"):
             await _handle_interaction_callback(query, update, context)
             return
+        elif data.startswith("plan:"):
+            await _handle_plan_callback(query, context)
         elif data.startswith("agent_page:"):
             await _handle_agent_page_callback(query, context)
         elif data.startswith("agent:"):

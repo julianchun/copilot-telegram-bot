@@ -259,6 +259,9 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
 
     # ---- Execute chat ----
 
+    service.telegram_bot = context.bot
+    service.telegram_chat_id = _get_update_chat_id(update)
+
     try:
         await service.chat(
             user_text, 

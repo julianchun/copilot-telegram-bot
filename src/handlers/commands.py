@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import time
@@ -531,30 +532,23 @@ async def _session_files(update: Update):
 
 
 async def _session_plan(update: Update):
-    """Show the session plan (plan.md from workspace)."""
+    """Show the session plan via SDK RPC (session.rpc.plan.read())."""
     from src.config import TELEGRAM_MSG_LIMIT
 
-    workspace_raw = getattr(service.session, "workspace_path", None) if service.session else None
-
-    if not workspace_raw:
+    if not service.session:
         await update.message.reply_text(
             "📋 Session plan not available.\n"
-            "Session plans are only available when infinite sessions are enabled."
+            "Session plans are only available when a session is active."
         )
         return
 
-    workspace_path = Path(workspace_raw) if not isinstance(workspace_raw, Path) else workspace_raw
-    plan_file = workspace_path / "plan.md"
-    if not plan_file.is_file():
+    exists, content, _ = await service.plan_read()
+
+    if not exists or not content:
         await update.message.reply_text("📋 No plan found for this session.")
         return
 
-    try:
-        content = plan_file.read_text(encoding="utf-8", errors="replace").strip()
-    except (PermissionError, OSError) as e:
-        await update.message.reply_text(f"📋 Error reading plan: {e}")
-        return
-
+    content = content.strip()
     if not content:
         await update.message.reply_text("📋 Session plan is empty.")
         return
@@ -562,7 +556,6 @@ async def _session_plan(update: Update):
     if len(content) <= TELEGRAM_MSG_LIMIT - 50:
         await update.message.reply_text(f"📋 Session Plan:\n\n{content}")
     else:
-        import io
         doc = io.BytesIO(content.encode("utf-8"))
         doc.name = "plan.md"
         await update.message.reply_document(document=doc, caption="📋 Session Plan (full)")

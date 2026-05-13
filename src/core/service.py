@@ -87,6 +87,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         self._cancelled = False  # Set by /cancel to signal abort to chat_handler
         self.allow_all_tools: bool = False  # /allowall toggle
 
+        # Telegram bot reference — set by chat_handler so event handlers can send messages
+        self.telegram_bot: Any = None
+        self.telegram_chat_id: Optional[int] = None
+
+        # Pending exit plan mode request data — set by EXIT_PLAN_MODE_REQUESTED event
+        self._pending_exit_plan_mode: Optional[dict] = None
+
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
 
@@ -458,6 +465,21 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         except Exception as e:
             logger.warning(f"Mode switch failed (non-fatal): {e}")
             return False
+
+    async def plan_read(self) -> tuple[bool, str | None, str | None]:
+        """Read the current plan via SDK RPC.
+
+        Returns (exists, content, path). Uses session.rpc.plan.read() — the SDK-native
+        approach, preferred over reading workspace_path/plan.md directly.
+        """
+        if not self.session:
+            return False, None, None
+        try:
+            result = await self.session.rpc.plan.read()
+            return result.exists, result.content, result.path
+        except Exception as e:
+            logger.warning(f"plan_read() failed: {e}")
+            return False, None, None
 
     # ── Agent management ─────────────────────────────────────────────
 

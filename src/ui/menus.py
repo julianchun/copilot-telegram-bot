@@ -492,3 +492,12 @@ def get_input_selection_menu(
         page_callback_builder=lambda next_page: f"input_page:{interaction_id}:{next_page}",
         action_rows=action_rows,
     )
+
+
+def get_exit_plan_mode_keyboard(request_id: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for exit_plan_mode.requested approval UI."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve", callback_data=f"plan:approve:{request_id}"),
+        InlineKeyboardButton("📝 Edit", callback_data=f"plan:edit:{request_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"plan:reject:{request_id}"),
+    ]])

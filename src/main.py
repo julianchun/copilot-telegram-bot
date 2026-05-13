@@ -74,8 +74,13 @@ async def post_init(application):
     
     if ALLOWED_USER_ID:
         try:
-            msg, keyboard, _ = await build_main_menu()
+            msg, keyboard, sys_info = await build_main_menu()
             await application.bot.send_message(chat_id=ALLOWED_USER_ID, text=msg, reply_markup=keyboard)
+
+            # Populate user_data so projpage: callbacks can rebuild the header with real values
+            application.user_data[ALLOWED_USER_ID]['cli_version'] = sys_info[0]
+            application.user_data[ALLOWED_USER_ID]['auth'] = sys_info[1]
+            application.user_data[ALLOWED_USER_ID]['sdk_version'] = sys_info[2]
             
             # Set up session end notification callback
             async def notify_session_end(msg: str):

@@ -1,6 +1,7 @@
 """Unit tests for Mode API and Agent management methods in CopilotService."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -203,3 +204,26 @@ class TestReloadAgents:
         svc.session.rpc.agent.reload = AsyncMock(side_effect=RuntimeError("fail"))
         result = await svc.reload_agents()
         assert result == []
+
+
+# ── plan_read ──────────────────────────────────────────────────────────
+
+
+class TestPlanRead:
+    async def test_plan_read_returns_sdk_fields(self, svc):
+        svc.session.rpc.plan.read = AsyncMock(
+            return_value=SimpleNamespace(exists=True, content="plan", path="/repo/plan.md")
+        )
+
+        result = await svc.plan_read()
+
+        assert result == (True, "plan", "/repo/plan.md")
+
+    async def test_plan_read_missing_required_field_returns_fallback(self, svc):
+        svc.session.rpc.plan.read = AsyncMock(
+            return_value=SimpleNamespace(exists=True, content="plan")
+        )
+
+        result = await svc.plan_read()
+
+        assert result == (False, None, None)

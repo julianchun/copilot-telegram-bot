@@ -189,11 +189,11 @@ class TestSessionCommand:
         assert "denied" in reply
 
     async def test_session_plan_no_workspace(self, mock_update, mock_context, mock_service):
-        """/session plan when workspace_path is None."""
+        """/session plan when session is None."""
         from src.handlers.commands import session_command
 
         mock_context.args = ["plan"]
-        mock_service.session.workspace_path = None
+        mock_service.session = None
 
         await session_command(mock_update, mock_context)
 
@@ -201,13 +201,11 @@ class TestSessionCommand:
         assert "not available" in reply
 
     async def test_session_plan_shows_content(self, mock_update, mock_context, mock_service, tmp_path):
-        """/session plan shows plan.md content inline."""
+        """/session plan shows plan content inline."""
         from src.handlers.commands import session_command
 
-        (tmp_path / "plan.md").write_text("# My Plan\n\n- Step 1\n- Step 2")
         mock_context.args = ["plan"]
-        # Use string path to verify str→Path conversion
-        mock_service.session.workspace_path = str(tmp_path)
+        mock_service.plan_read = AsyncMock(return_value=(True, "# My Plan\n\n- Step 1\n- Step 2", None))
 
         await session_command(mock_update, mock_context)
 
@@ -216,11 +214,11 @@ class TestSessionCommand:
         assert "Step 1" in reply
 
     async def test_session_plan_no_plan_file(self, mock_update, mock_context, mock_service, tmp_path):
-        """/session plan when plan.md doesn't exist."""
+        """/session plan when no plan exists."""
         from src.handlers.commands import session_command
 
         mock_context.args = ["plan"]
-        mock_service.session.workspace_path = tmp_path
+        mock_service.plan_read = AsyncMock(return_value=(False, None, None))
 
         await session_command(mock_update, mock_context)
 
@@ -228,12 +226,11 @@ class TestSessionCommand:
         assert "No plan found" in reply
 
     async def test_session_plan_empty_file(self, mock_update, mock_context, mock_service, tmp_path):
-        """/session plan when plan.md exists but is empty or whitespace-only."""
+        """/session plan when plan exists but is empty or whitespace-only."""
         from src.handlers.commands import session_command
 
-        (tmp_path / "plan.md").write_text("   \n\n  ")
         mock_context.args = ["plan"]
-        mock_service.session.workspace_path = tmp_path
+        mock_service.plan_read = AsyncMock(return_value=(True, "   \n\n  ", None))
 
         await session_command(mock_update, mock_context)
 
@@ -245,9 +242,8 @@ class TestSessionCommand:
         from src.handlers.commands import session_command
 
         large_content = "x" * 5000
-        (tmp_path / "plan.md").write_text(large_content)
         mock_context.args = ["plan"]
-        mock_service.session.workspace_path = tmp_path
+        mock_service.plan_read = AsyncMock(return_value=(True, large_content, None))
         mock_update.message.reply_document = AsyncMock()
 
         await session_command(mock_update, mock_context)

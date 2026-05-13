@@ -262,3 +262,124 @@ async def test_handle_interaction_callback_input_page_rerenders_paginated_menu(
     text = mock_callback_query.edit_message_text.call_args.args[0]
     assert "Page 2/2" in text
     assert "10. Option 10" in text
+
+
+# --- _handle_plan_callback ---
+
+
+async def test_handle_plan_callback_stale_request_is_blocked(
+    mock_callback_query, mock_context, mock_service
+):
+    """Stale plan callbacks are rejected with an alert."""
+    mock_callback_query.data = "plan:approve:stale-request"
+    mock_service._pending_exit_plan_mode = {"request_id": "active-request"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    mock_callback_query.answer.assert_awaited_once_with(
+        "⚠️ This plan request is no longer active.", show_alert=True
+    )
+    mock_callback_query.edit_message_text.assert_not_awaited()
+
+
+async def test_button_handler_plan_stale_request_shows_alert_once(
+    mock_update_with_query, mock_context, mock_service
+):
+    """button_handler defers plan answers so stale alerts are not swallowed."""
+    mock_update_with_query.callback_query.data = "plan:approve:stale-request"
+    mock_service._pending_exit_plan_mode = {"request_id": "active-request"}
+
+    from src.handlers.callbacks import button_handler
+
+    await button_handler(mock_update_with_query, mock_context)
+
+    mock_update_with_query.callback_query.answer.assert_awaited_once_with(
+        "⚠️ This plan request is no longer active.", show_alert=True
+    )
+    mock_update_with_query.callback_query.edit_message_text.assert_not_awaited()
+
+
+async def test_handle_plan_callback_reject_allows_through_when_no_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Callbacks still work after restart when no pending state is stored."""
+    mock_callback_query.data = "plan:reject:req-1"
+    mock_service._pending_exit_plan_mode = None
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
+
+
+async def test_handle_plan_callback_reject_clears_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Rejecting a plan clears the stored pending request."""
+    mock_callback_query.data = "plan:reject:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
+
+
+async def test_handle_plan_callback_edit_clears_pending_state(
+    mock_callback_query, mock_context, mock_service
+):
+    """Requesting a plan edit clears the stored pending request."""
+    mock_callback_query.data = "plan:edit:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "Plan edit requested" in mock_callback_query.edit_message_text.call_args.args[0]
+
+
+async def test_handle_plan_callback_approve_uses_service_set_mode(
+    mock_callback_query, mock_context, mock_service
+):
+    """Approving a plan goes through service.set_mode instead of direct RPC."""
+    mock_callback_query.data = "plan:approve:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    mock_service.session = MagicMock()
+    mock_service.session.rpc.mode.set = AsyncMock()
+    mock_service.set_mode = AsyncMock(return_value=True)
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    mock_service.set_mode.assert_awaited_once_with("interactive")
+    mock_service.session.rpc.mode.set.assert_not_awaited()
+    assert "Plan approved" in mock_callback_query.edit_message_text.call_args.args[0]
+    assert mock_service._pending_exit_plan_mode is None
+
+
+async def test_handle_plan_callback_approve_requires_active_session(
+    mock_callback_query, mock_context, mock_service
+):
+    """Approving a plan without a session shows an error instead of false success."""
+    mock_callback_query.data = "plan:approve:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    mock_service.session = None
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    mock_service.set_mode.assert_not_awaited()
+    mock_callback_query.edit_message_text.assert_awaited_once_with(
+        "⚠️ No active session. Cannot switch mode."
+    )
+    assert mock_service._pending_exit_plan_mode is None
