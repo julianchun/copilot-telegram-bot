@@ -363,6 +363,7 @@ async def test_handle_plan_callback_approve_uses_service_set_mode(
     mock_service.set_mode.assert_awaited_once_with("interactive")
     mock_service.session.rpc.mode.set.assert_not_awaited()
     assert "Plan approved" in mock_callback_query.edit_message_text.call_args.args[0]
+    assert mock_service._pending_exit_plan_mode is None
 
 
 async def test_handle_plan_callback_approve_requires_active_session(
@@ -381,3 +382,4 @@ async def test_handle_plan_callback_approve_requires_active_session(
     mock_callback_query.edit_message_text.assert_awaited_once_with(
         "⚠️ No active session. Cannot switch mode."
     )
+    assert mock_service._pending_exit_plan_mode is None

@@ -394,6 +394,7 @@ async def _handle_plan_callback(query, context):
         logger.error(f"❌ query.answer() failed for plan callback: {e}", exc_info=True)
 
     if action == "approve":
+        service._pending_exit_plan_mode = None
         if not service.session:
             await query.edit_message_text("⚠️ No active session. Cannot switch mode.")
             return
