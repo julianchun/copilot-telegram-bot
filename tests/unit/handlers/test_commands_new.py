@@ -1,5 +1,7 @@
 """Unit tests for /ping, /allowall, /instructions commands."""
 
+from datetime import datetime
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
@@ -90,6 +92,99 @@ class TestPingCommand:
         text = mock_update.message.reply_text.call_args[0][0]
         assert "🔴 Error" in text
 
+
+# ---------------------------------------------------------------------------
+# /resume, /attach
+# ---------------------------------------------------------------------------
+
+class TestSessionAttachmentCommands:
+    async def test_resume_empty(self, mock_update, mock_context, mock_service):
+        mock_service.list_copilot_sessions = AsyncMock(return_value=[])
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import resume_command
+            await resume_command(mock_update, mock_context)
+
+        msg = mock_update.message.reply_text.return_value
+        assert "No Copilot sessions" in msg.edit_text.call_args.args[0]
+
+    async def test_resume_populated(self, mock_update, mock_context, mock_service):
+        session = SimpleNamespace(
+            sessionId="abc123456789",
+            summary="Fix tests",
+            selectedModel="gpt-4.1",
+            modifiedTime="2026-05-18T12:00:00+00:00",
+            context=SimpleNamespace(cwd="/repo/app", branch="main"),
+        )
+        mock_service.list_copilot_sessions = AsyncMock(return_value=[session])
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import resume_command
+            await resume_command(mock_update, mock_context)
+
+        msg = mock_update.message.reply_text.return_value
+        text = msg.edit_text.call_args.args[0]
+        assert "Resume Session" in text
+        assert "Mode:" not in text
+        assert "Fix tests" in text
+        assert "gpt-4.1" not in text
+        expected_time = datetime.fromisoformat("2026-05-18T12:00:00+00:00").astimezone().strftime("%m/%d %H:%M")
+        assert expected_time in text
+        assert "2026-05-18T12:00:00" not in text
+        assert "reply_markup" in msg.edit_text.call_args.kwargs
+
+    async def test_attach_session_id(self, mock_update, mock_context, mock_service):
+        mock_context.args = ["abc123"]
+        mock_service.attach_session = AsyncMock()
+        mock_service.populate_session_metadata = AsyncMock()
+        mock_service.get_session_info.return_value = mock_service.session_info
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import attach_command
+            await attach_command(mock_update, mock_context)
+
+        mock_service.attach_session.assert_awaited_once_with("abc123")
+        msg = mock_update.message.reply_text.return_value
+        assert "Session Attached" in msg.edit_text.call_args.args[0]
+        assert "Send a message to continue." in msg.edit_text.call_args.args[0]
+        assert "reply_markup" not in msg.edit_text.call_args.kwargs
+
+    async def test_attach_usage_excludes_foreground(self, mock_update, mock_context, mock_service):
+        mock_context.args = []
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import attach_command
+            await attach_command(mock_update, mock_context)
+
+        text = mock_update.message.reply_text.call_args.args[0]
+        assert "Usage: /attach <session_id|last>" in text
+        assert "foreground" not in text
+
+    async def test_attach_last_empty(self, mock_update, mock_context, mock_service):
+        mock_context.args = ["last"]
+        mock_service.attach_last_session = AsyncMock(side_effect=RuntimeError("no sessions found"))
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.commands import attach_command
+            await attach_command(mock_update, mock_context)
+
+        msg = mock_update.message.reply_text.return_value
+        assert "No Copilot sessions" in msg.edit_text.call_args.args[0]
 
 # ---------------------------------------------------------------------------
 # /allowall
@@ -283,6 +378,98 @@ class TestInstructionsCallbacks:
         assert "No custom instructions" in text
 
 
+class TestSessionAttachmentCallbacks:
+    async def test_session_attach_callback(self, mock_callback_query, mock_context, mock_service):
+        mock_callback_query.data = "sessattach:abc123"
+        mock_service.attach_session = AsyncMock()
+        mock_service.populate_session_metadata = AsyncMock()
+        mock_service.get_session_info.return_value = mock_service.session_info
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_session_attach_callback
+            await _handle_session_attach_callback(mock_callback_query, mock_context)
+
+        mock_service.attach_session.assert_awaited_once_with("abc123")
+        assert "Session Attached" in mock_callback_query.edit_message_text.call_args.args[0]
+        assert "Send a message to continue." in mock_callback_query.edit_message_text.call_args.args[0]
+        assert "reply_markup" not in mock_callback_query.edit_message_text.call_args.kwargs
+
+    async def test_session_picker_page_callback(self, mock_callback_query, mock_context, mock_service):
+        mock_callback_query.data = "sessions_page:0"
+        sessions = [
+            SimpleNamespace(
+                sessionId=f"session-{index}",
+                summary=f"Session {index}",
+                modifiedTime=f"2026-05-18T12:0{index}:00+00:00",
+                context=SimpleNamespace(cwd=f"/repo/app-{index}", branch="main"),
+            )
+            for index in range(7)
+        ]
+        mock_service.list_copilot_sessions = AsyncMock(return_value=sessions)
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_sessions_page_callback
+            await _handle_sessions_page_callback(mock_callback_query, mock_context)
+
+        text = mock_callback_query.edit_message_text.call_args.args[0]
+        assert "Session 6" in text
+        assert "Session 1" in text
+        assert "Session 0" not in text
+        assert "Mode:" not in text
+        keyboard = mock_callback_query.edit_message_text.call_args.kwargs["reply_markup"]
+        buttons = [
+            button
+            for row in keyboard.inline_keyboard
+            for button in row
+        ]
+        numbered_buttons = [button for button in buttons if button.text.isdigit()]
+        assert [button.text for button in numbered_buttons] == ["1", "2", "3", "4", "5", "6"]
+        assert all(button.callback_data.startswith("sessdetail:") for button in numbered_buttons)
+        assert all(not button.callback_data.startswith("sessattach:") for button in buttons)
+        assert all(not button.callback_data.startswith("sessshow:") for button in buttons)
+        assert "Foreground" not in [button.text for button in buttons]
+        assert "Last" not in [button.text for button in buttons]
+
+    async def test_session_detail_callback(self, mock_callback_query, mock_context, mock_service):
+        mock_callback_query.data = "sessdetail:abc123456789"
+        mock_service.list_copilot_sessions = AsyncMock(return_value=[
+            SimpleNamespace(
+                sessionId="abc123456789",
+                summary="Fix tests",
+                startTime="2026-05-18T11:00:00",
+                modifiedTime="2026-05-18T12:00:00",
+                context=SimpleNamespace(cwd="/repo/app", branch="main"),
+                selectedModel="gpt-4.1",
+            )
+        ])
+
+        with _service_patches(mock_service)[0], \
+             _service_patches(mock_service)[1], \
+             _service_patches(mock_service)[2], \
+             _service_patches(mock_service)[3]:
+            from src.handlers.callbacks import _handle_session_detail_callback
+            await _handle_session_detail_callback(mock_callback_query, mock_context)
+
+        text = mock_callback_query.edit_message_text.call_args.args[0]
+        assert "Session Details" in text
+        assert "abc123456789" in text
+        assert "Fix tests" in text
+        assert "Created: unknown time" not in text
+        keyboard = mock_callback_query.edit_message_text.call_args.kwargs["reply_markup"]
+        button_texts = [
+            button.text
+            for row in keyboard.inline_keyboard
+            for button in row
+        ]
+        assert button_texts == ["Attach", "⬅ Back"]
+
+
 # ---------------------------------------------------------------------------
 # Permission bridge with allow_all_tools
 # ---------------------------------------------------------------------------
@@ -375,4 +562,3 @@ class TestAutopilotCommand:
 
         mock_service.set_mode.assert_awaited_once_with("autopilot")
         mock_chat.assert_awaited_once_with(mock_update, mock_context, override_text="do stuff")
-

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Dict, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,6 +8,7 @@ from src.config import GRANTED_PROJECT_PATHS, TELEGRAM_MSG_LIMIT
 
 SELECTION_BUTTON_COLUMNS = 3
 SELECTION_PAGE_SIZE = SELECTION_BUTTON_COLUMNS * 3
+SESSIONS_PAGE_SIZE = 6
 
 
 @dataclass(frozen=True)
@@ -222,6 +224,196 @@ def get_model_menu(models_data: List[Dict[str, Any]], current_model: str | None 
 
 def get_model_keyboard(models_data: List[Dict[str, Any]], current_model: str | None = None, page: int = 0) -> InlineKeyboardMarkup:
     return get_model_menu(models_data, current_model=current_model, page=page)[1]
+
+
+def _session_attr(item: Any, *names: str, default: Any = None) -> Any:
+    for name in names:
+        if isinstance(item, dict) and name in item:
+            return item[name]
+        if hasattr(item, name):
+            return getattr(item, name)
+    return default
+
+
+def short_session_id(session_id: str | None) -> str:
+    """Display a readable short session ID while callbacks keep the full value."""
+    if not session_id:
+        return "unknown"
+    return session_id if len(session_id) <= 12 else f"{session_id[:8]}...{session_id[-4:]}"
+
+
+def _compact_timestamp(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown time"
+    normalized = text
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text.replace("T", " ").replace("Z", "").split(".", 1)[0]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return parsed.astimezone().strftime("%m/%d %H:%M")
+
+
+def _session_context(session: Any) -> Any:
+    return _session_attr(session, "context", default=None)
+
+
+def _session_cwd(session: Any) -> str | None:
+    context = _session_context(session)
+    return _session_attr(context, "cwd", default=None)
+
+
+def _session_branch(session: Any) -> str | None:
+    context = _session_context(session)
+    return _session_attr(context, "branch", default=None)
+
+
+def _session_model(session: Any) -> str:
+    context = _session_context(session)
+    return (
+        _session_attr(session, "model", "selectedModel", "selected_model", "currentModel", "current_model", default=None)
+        or _session_attr(context, "model", "selectedModel", "selected_model", "currentModel", "current_model", default=None)
+        or "model unknown"
+    )
+
+
+def _session_project(session: Any) -> str:
+    cwd = _session_cwd(session) or _session_attr(session, "cwd", default=None)
+    return Path(cwd).name if cwd else "unknown project"
+
+
+def _session_summary(session: Any) -> str:
+    return _session_attr(session, "summary", "name", default=None) or "(untitled session)"
+
+
+def _session_modified(session: Any) -> str:
+    return _compact_timestamp(_session_attr(session, "modifiedTime", "modified", default=None))
+
+
+def _session_created(session: Any) -> str:
+    return _compact_timestamp(_session_attr(session, "startTime", "createdTime", "created", default=None))
+
+
+def _session_overview_line(number: int, session: Any) -> str:
+    session_id = _session_attr(session, "sessionId", "session_id", default=None)
+    branch = _session_branch(session) or "no branch"
+    return (
+        f"{number}. {_session_summary(session)}\n"
+        f"   {short_session_id(session_id)} · {_session_project(session)} · {branch}\n"
+        f"   Updated {_session_modified(session)}"
+    )
+
+
+def format_session_detail(session: Any) -> str:
+    """Format a single session details card for Telegram."""
+    session_id = _session_attr(session, "sessionId", "session_id", default=None) or "unknown"
+    cwd = _session_cwd(session) or _session_attr(session, "cwd", default=None) or "unknown path"
+    branch = _session_branch(session) or _session_attr(session, "branch", default=None) or "N/A"
+    return (
+        "🧷 Session Details\n"
+        f"• Session: {session_id}\n"
+        f"• Summary: {_session_summary(session)}\n"
+        f"• Project: {_session_project(session)}\n"
+        f"• Path: {cwd}\n"
+        f"• Branch: {branch}\n"
+        f"• Model: {_session_model(session)}\n"
+        f"• Created: {_session_created(session)}\n"
+        f"• Updated: {_session_modified(session)}"
+    )
+
+
+def attach_success_title(target: str) -> str:
+    if target == "last":
+        return "✅ Latest Session Attached"
+    return "✅ Session Attached"
+
+
+def format_attached_session(
+    session_info: Any,
+    *,
+    fallback_session_id: str | None = None,
+    fallback_cwd: str | None = None,
+    fallback_model: str | None = None,
+    prefix: str = "✅ Attached",
+) -> str:
+    session_id = _session_attr(session_info, "sessionId", "session_id", default=None) or fallback_session_id
+    cwd = _session_cwd(session_info) or _session_attr(session_info, "cwd", default=None) or fallback_cwd or "unknown path"
+    branch = _session_branch(session_info) or _session_attr(session_info, "branch", default=None) or "N/A"
+    model = _session_model(session_info)
+    if model == "model unknown" and fallback_model:
+        model = fallback_model
+    return (
+        f"{prefix}\n"
+        f"• Session: {short_session_id(session_id)}\n"
+        f"• Summary: {_session_summary(session_info)}\n"
+        f"• Path: {cwd}\n"
+        f"• Branch: {branch}\n"
+        f"• Model: {model}\n\n"
+        "Send a message to continue."
+    )
+
+
+def get_session_detail_actions(session_id: str | None) -> InlineKeyboardMarkup | None:
+    if not session_id:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Attach", callback_data=f"sessattach:{session_id}")],
+        [InlineKeyboardButton("⬅ Back", callback_data="sessions_page:0")],
+    ])
+
+
+def get_sessions_menu(
+    sessions: List[Any],
+    page: int = 0,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Build a paginated session dashboard with detail buttons."""
+    if not sessions:
+        return "📭 No Copilot sessions found.", None
+
+    sorted_sessions = sorted(
+        sessions,
+        key=lambda item: _session_attr(item, "modifiedTime", "modified", default="") or "",
+        reverse=True,
+    )
+
+    total_pages = max(1, (len(sorted_sessions) + SESSIONS_PAGE_SIZE - 1) // SESSIONS_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * SESSIONS_PAGE_SIZE
+    page_sessions = sorted_sessions[start:start + SESSIONS_PAGE_SIZE]
+
+    lines = [
+        "🧷 Resume Session",
+        "",
+    ]
+    for page_number, session in enumerate(page_sessions, start=1):
+        lines.append(_session_overview_line(page_number, session))
+    lines.extend([
+        "",
+        f"Page {page + 1}/{total_pages} · Select a session:",
+    ])
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for page_number, session in enumerate(page_sessions, start=1):
+        session_id = _session_attr(session, "sessionId", "session_id", default="") or ""
+        if not session_id:
+            continue
+        if not rows or len(rows[-1]) == SELECTION_BUTTON_COLUMNS:
+            rows.append([])
+        rows[-1].append(InlineKeyboardButton(str(page_number), callback_data=f"sessdetail:{session_id}"))
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"sessions_page:{page - 1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶", callback_data=f"sessions_page:{page + 1}"))
+    if nav_row:
+        rows.append(nav_row)
+
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 def get_skill_source_display(source: str) -> tuple[str, str]:

@@ -17,7 +17,7 @@ from src.handlers.commands import (
     usage_command, plan_command, autopilot_command, cwd_command, ls_command, 
     context_command,
     model_command, skills_command, share_command, cancel_command,
-    session_command, agent_command,
+    session_command, resume_command, attach_command, agent_command,
     ping_command, allowall_command, instructions_command, init_command,
     build_main_menu
 )
@@ -49,6 +49,8 @@ async def setup_bot_commands(application):
         BotCommand("usage", "Display session usage metrics"),
         BotCommand("context", "Display model context info"),
         BotCommand("session", "Session management (info, files, plan)"),
+        BotCommand("resume", "Continue a previous Copilot session"),
+        BotCommand("attach", "Attach to a Copilot session"),
         BotCommand("ls", "Project file tree"),
         BotCommand("cwd", "Show current directory"),
         BotCommand("ping", "Health check"),
@@ -145,6 +147,8 @@ def main():
     app.add_handler(CommandHandler("share", share_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("session", session_command))
+    app.add_handler(CommandHandler("resume", resume_command))
+    app.add_handler(CommandHandler("attach", attach_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("allowall", allowall_command))
     app.add_handler(CommandHandler("instructions", instructions_command))

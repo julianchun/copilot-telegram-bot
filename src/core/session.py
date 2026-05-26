@@ -1,18 +1,21 @@
 """Session lifecycle methods for CopilotService (mixin)."""
 
 import asyncio
+import inspect
 import time
 import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from src.config import (
     DEFAULT_MODEL,
+    GRANTED_PROJECT_PATHS,
     INTERACTION_TIMEOUT,
     PERMISSION_TIMEOUT,
     MCP_SERVERS,
+    WORKSPACE_PATH,
 )
 from src.core.context import ctx
 from src.core.usage import SessionUsageTracker, SessionInfo
@@ -52,7 +55,7 @@ class SessionMixin:
       _handle_event (from EventHandlerMixin), cleanup_temp_dir
     """
 
-    def _build_cli_compatible_skill_directories(self) -> list[str]:
+    def _build_cli_compatible_skill_directories(self, root_path: Path | str | None = None) -> list[str]:
         """Return skill roots that match documented Copilot CLI locations."""
         skill_dirs: list[str] = []
 
@@ -63,8 +66,9 @@ class SessionMixin:
         ]:
             skill_dirs.append(str(global_candidate))
 
-        if ctx.root_path:
-            project_root = Path(ctx.root_path)
+        active_root = root_path or ctx.root_path
+        if active_root:
+            project_root = Path(active_root)
             for candidate in [
                 project_root / ".github" / "skills",
                 project_root / ".claude" / "skills",
@@ -73,6 +77,168 @@ class SessionMixin:
                 skill_dirs.append(str(candidate))
 
         return list(dict.fromkeys(skill_dirs))
+
+    def _build_session_options(self, root_path: Path | str | None = None) -> dict[str, Any]:
+        """Return shared SDK options for creating or resuming a session."""
+        from src.core.tools import list_files, read_file
+
+        model = self.user_selected_model or self.current_model or DEFAULT_MODEL
+        active_root = root_path or ctx.root_path
+        skill_dirs = self._build_cli_compatible_skill_directories(active_root)
+        return {
+            "on_permission_request": PermissionHandler.approve_all,
+            "model": model,
+            "client_name": "copilot-telegram-bot",
+            "streaming": False,
+            "tools": [list_files, read_file],
+            "hooks": {
+                "on_pre_tool_use": self._permission_bridge,
+                "on_session_end": self._on_session_end,
+            },
+            "on_user_input_request": self._user_input_bridge,
+            "system_message": {
+                "mode": "customize",
+                "sections": {
+                    "tone": {
+                        "action": "append",
+                        "content": (
+                            "\nYou are assisting via a Telegram bot. "
+                            "Respond concisely and always use Plain text. "
+                            "Avoid HTML tags. Keep responses focused and actionable. "
+                            "Format: Response must be PLAIN TEXT "
+                            "(no markdown code blocks, use simple bullets)."
+                        ),
+                    },
+                },
+            },
+            "reasoning_effort": self.current_reasoning_effort,
+            "on_event": self._handle_event,
+            "enable_config_discovery": True,
+            "mcp_servers": MCP_SERVERS,
+            "skill_directories": skill_dirs,
+            "working_directory": str(active_root),
+        }
+
+    def _metadata_value(self, item: Any, *names: str) -> Any:
+        for name in names:
+            if isinstance(item, dict) and name in item:
+                return item[name]
+            if hasattr(item, name):
+                return getattr(item, name)
+        return None
+
+    def _allowed_workspace_roots(self) -> list[Path]:
+        """Return configured roots that resumed sessions may attach to."""
+        return list(dict.fromkeys([
+            WORKSPACE_PATH.resolve(),
+            *[path.resolve() for path in GRANTED_PROJECT_PATHS],
+        ]))
+
+    def _workspace_path_from_metadata(self, metadata: Any | None) -> Path | None:
+        """Return the session cwd as a validated local workspace root."""
+        context = self._metadata_value(metadata, "context") if metadata else None
+        target_cwd = self._metadata_value(context, "cwd") if context else None
+        if not target_cwd:
+            return None
+
+        target_path = Path(str(target_cwd)).expanduser().resolve()
+        for allowed_root in self._allowed_workspace_roots():
+            try:
+                target_path.relative_to(allowed_root)
+                return target_path
+            except ValueError:
+                continue
+
+        allowed = ", ".join(str(path) for path in self._allowed_workspace_roots())
+        raise RuntimeError(
+            f"session cwd is outside allowed workspaces: {target_path}. "
+            f"Allowed roots: {allowed}"
+        )
+
+    def _build_resume_session_options(self, metadata: Any | None) -> tuple[dict[str, Any], Path | None]:
+        """Return SDK options for resume without overwriting target session state."""
+        target_workspace = self._workspace_path_from_metadata(metadata)
+        options = self._build_session_options(target_workspace)
+
+        if target_workspace:
+            options["working_directory"] = str(target_workspace)
+        else:
+            options.pop("working_directory", None)
+
+        if self.user_selected_model:
+            options["model"] = self.user_selected_model
+        else:
+            options.pop("model", None)
+            options.pop("reasoning_effort", None)
+
+        return options, target_workspace
+
+    def _apply_session_metadata(self, metadata: Any | None) -> None:
+        """Populate display metadata from SDK SessionMetadata when available."""
+        if not metadata:
+            return
+        self.session_info.session_id = self._metadata_value(metadata, "sessionId", "session_id") or self.session_info.session_id
+        self.session_info.name = self._metadata_value(metadata, "summary", "name")
+        self.session_info.created = self._metadata_value(metadata, "startTime", "created")
+        self.session_info.modified = self._metadata_value(metadata, "modifiedTime", "modified")
+        context = self._metadata_value(metadata, "context")
+        if context:
+            workspace_path = self._workspace_path_from_metadata(metadata)
+            if workspace_path:
+                ctx.set_root(workspace_path)
+            self.session_info.cwd = self._metadata_value(context, "cwd") or self.session_info.cwd
+            self.session_info.branch = self._metadata_value(context, "branch") or self.session_info.branch
+            self.session_info.git_root = self._metadata_value(context, "gitRoot", "git_root") or self.session_info.git_root
+            self.session_info.repository = self._metadata_value(context, "repository") or self.session_info.repository
+
+    def _activate_session(self, session, *, metadata: Any | None = None, workspace_path: Path | None = None) -> None:
+        """Reset local Telegram state for a newly active SDK session handle."""
+        if workspace_path:
+            ctx.set_root(workspace_path)
+        self.session = session
+        self.session_id = getattr(session, "session_id", self.session_id)
+        self.session_info = SessionInfo(
+            session_id=getattr(session, "session_id", None),
+            workspace_path=str(ctx.root_path),
+        )
+        self._apply_session_metadata(metadata)
+        self.session_expired = False
+        self._cancelled = False
+        self._tool_call_names.clear()
+        self.last_session_usage = None
+        self.last_assistant_usage = None
+        ctx.clear_tracked_files()
+        ctx.session_start_time = datetime.now()
+
+        self.usage_tracker = SessionUsageTracker()
+        self.usage_tracker.session_start_time = time.time()
+        if self.current_model:
+            self.usage_tracker.selected_model = self.current_model
+        self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
+
+    def _resume_supports_continue_pending_work(self) -> bool:
+        """Return whether the installed SDK accepts continue_pending_work."""
+        try:
+            parameters = inspect.signature(self.client.resume_session).parameters
+        except (TypeError, ValueError):
+            return True
+        if "continue_pending_work" in parameters:
+            return True
+        return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+
+    async def _restore_session_settings(self) -> None:
+        """Re-apply local mode/agent choices after creating or attaching."""
+        if self.current_mode != "interactive":
+            saved_mode = self.current_mode
+            self.current_mode = "interactive"
+            if not await self.set_mode(saved_mode):
+                logger.warning(f"Failed to restore mode '{saved_mode}' after session activation")
+
+        if self.current_agent:
+            saved_agent = self.current_agent
+            self.current_agent = None
+            if not await self.select_agent(saved_agent):
+                logger.warning(f"Failed to restore agent '{saved_agent}' after session activation")
 
     # ── Public lifecycle ──────────────────────────────────────────────
 
@@ -90,6 +256,13 @@ class SessionMixin:
         if not self.session:
             await self._create_session()
 
+    async def _ensure_client_running(self):
+        """Start the SDK client connection without creating a Telegram session."""
+        if not self._is_running:
+            logger.info("Starting Copilot Client connection...")
+            await self.client.start()
+            self._is_running = True
+
     async def stop(self):
         """Stop the Copilot client and clean up resources."""
         logger.info("Stopping Copilot Client...")
@@ -98,9 +271,9 @@ class SessionMixin:
 
         if self.session:
             try:
-                await self.session.destroy()
+                await self.session.disconnect()
             except Exception as e:
-                logger.warning(f"Error destroying session during stop: {e}")
+                logger.warning(f"Error disconnecting session during stop: {e}")
             self.session = None
 
         if self._is_running:
@@ -143,9 +316,9 @@ class SessionMixin:
 
         if self.session:
             try:
-                await self.session.destroy()
+                await self.session.disconnect()
             except Exception as e:
-                logger.warning(f"Error destroying session: {e}")
+                logger.warning(f"Error disconnecting session: {e}")
             self.session = None
 
         await self._create_session()
@@ -237,76 +410,82 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
-        from src.core.tools import list_files, read_file
-
         model = self.user_selected_model or self.current_model or DEFAULT_MODEL
         logger.info(f"Creating new session with model: {model}")
-        skill_dirs = self._build_cli_compatible_skill_directories()
-
-        self.session = await self.client.create_session(
-            on_permission_request=PermissionHandler.approve_all,
-            model=model,
-            client_name="copilot-telegram-bot",
-            streaming=False,
-            tools=[list_files, read_file],
-            hooks={
-                "on_pre_tool_use": self._permission_bridge,
-                "on_session_end": self._on_session_end,
-            },
-            on_user_input_request=self._user_input_bridge,
-            system_message={
-                "mode": "customize",
-                "sections": {
-                    "tone": {
-                        "action": "append",
-                        "content": (
-                            "\nYou are assisting via a Telegram bot. "
-                            "Respond concisely and always use Plain text. "
-                            "Avoid HTML tags. Keep responses focused and actionable. "
-                            "Format: Response must be PLAIN TEXT "
-                            "(no markdown code blocks, use simple bullets)."
-                        ),
-                    },
-                },
-            },
-            reasoning_effort=self.current_reasoning_effort,
-            on_event=self._handle_event,
-            enable_config_discovery=True,
-            mcp_servers=MCP_SERVERS,
-            skill_directories=skill_dirs,
-        )
+        session = await self.client.create_session(**self._build_session_options())
         self.current_model = model
         logger.info(f"✅ Session created with model: {model}")
 
-        # Populate initial session info with workspace details
-        self.session_info.workspace_path = str(ctx.root_path)
+        self._activate_session(session)
 
-        # on_event= in create_session handles all events including early ones;
-        # no separate session.on() needed for _handle_event.
-        self.session_expired = False
-        ctx.clear_tracked_files()
-        ctx.session_start_time = datetime.now()
+        await self._restore_session_settings()
 
-        # Reset usage tracker for new session BEFORE subscribing
-        self.usage_tracker = SessionUsageTracker()
-        self.usage_tracker.session_start_time = time.time()
-        if self.current_model:
-            self.usage_tracker.selected_model = self.current_model
-        self._usage_unsubscribe = self.session.on(self.usage_tracker.handle_event)
+    async def list_copilot_sessions(self):
+        """List sessions known to the connected Copilot runtime."""
+        await self._ensure_client_running()
+        return await self.client.list_sessions()
 
-        # If a non-default mode was active before session creation, re-apply now.
-        if self.current_mode != "interactive":
-            saved_mode = self.current_mode
-            self.current_mode = "interactive"  # reset so set_mode() sees a change
-            if not await self.set_mode(saved_mode):
-                logger.warning(f"Failed to restore mode '{saved_mode}' after session reset")
+    async def attach_session(self, session_id: str, continue_pending_work: bool = True):
+        """Attach Telegram to an existing SDK session without deleting it on failure."""
+        if self._chat_lock.locked():
+            raise RuntimeError("request in progress")
+        async with self._chat_lock:
+            return await self._attach_session_unlocked(session_id, continue_pending_work)
 
-        # If a custom agent was selected before session creation, re-apply now.
-        if self.current_agent:
-            saved_agent = self.current_agent
-            self.current_agent = None
-            if not await self.select_agent(saved_agent):
-                logger.warning(f"Failed to restore agent '{saved_agent}' after session reset")
+    async def _attach_session_unlocked(self, session_id: str, continue_pending_work: bool = True):
+        """Attach to a session while the caller holds _chat_lock."""
+        await self._ensure_client_running()
+        if self.session and getattr(self.session, "session_id", None) == session_id:
+            metadata = None
+            try:
+                metadata = await self.client.get_session_metadata(session_id)
+            except Exception as e:
+                logger.debug(f"Could not refresh metadata for active session {session_id}: {e}")
+            workspace_path = self._workspace_path_from_metadata(metadata)
+            if workspace_path:
+                ctx.set_root(workspace_path)
+            self._apply_session_metadata(metadata)
+            self.session_expired = False
+            self._cancelled = False
+            return self.session
+
+        metadata = None
+        try:
+            metadata = await self.client.get_session_metadata(session_id)
+        except Exception as e:
+            logger.debug(f"Could not prefetch metadata for session {session_id}: {e}")
+
+        options, workspace_path = self._build_resume_session_options(metadata)
+        if continue_pending_work and self._resume_supports_continue_pending_work():
+            options["continue_pending_work"] = True
+        elif continue_pending_work:
+            logger.warning("Installed Copilot SDK does not support continue_pending_work on resume")
+        new_session = await self.client.resume_session(session_id, **options)
+
+        old_session = self.session
+        self._unsubscribe_handlers()
+        if old_session:
+            try:
+                await old_session.disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting previous session during attach: {e}")
+
+        if "model" in options:
+            self.current_model = options["model"]
+        self._activate_session(new_session, metadata=metadata, workspace_path=workspace_path)
+        await self._restore_session_settings()
+        return new_session
+
+    async def attach_last_session(self):
+        """Attach to the most recently modified session."""
+        if self._chat_lock.locked():
+            raise RuntimeError("request in progress")
+        async with self._chat_lock:
+            await self._ensure_client_running()
+            session_id = await self.client.get_last_session_id()
+            if not session_id:
+                raise RuntimeError("no sessions found")
+            return await self._attach_session_unlocked(session_id)
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""

@@ -391,6 +391,77 @@ async def share_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Share failed: {e}")
         await msg.edit_text(f"⚠️ Error sharing session: {e}")
 
+
+async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List previous Copilot sessions that can be resumed from Telegram."""
+    if not await security_check(update): return
+    msg = await update.message.reply_text("🔎 Fetching previous Copilot sessions...")
+    try:
+        from src.ui.menus import get_sessions_menu
+
+        sessions = await service.list_copilot_sessions()
+        text, keyboard = get_sessions_menu(sessions)
+        if keyboard:
+            await msg.edit_text(text, reply_markup=keyboard)
+        else:
+            await msg.edit_text(text)
+    except Exception as e:
+        logger.error(f"/resume failed: {e}", exc_info=True)
+        await msg.edit_text(f"⚠️ Failed to list sessions: {e}")
+
+
+async def attach_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Attach Telegram to an existing Copilot runtime session."""
+    if not await security_check(update): return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: /attach <session_id|last>\n"
+            "Tip: /resume opens the session picker."
+        )
+        return
+
+    target = args[0]
+    msg = await update.message.reply_text(f"🧷 Attaching to {target}...")
+    try:
+        if target == "last":
+            await service.attach_last_session()
+        else:
+            await service.attach_session(target)
+
+        service.project_selected = True
+        cwd = service.get_session_info().cwd
+        if cwd:
+            service.project_name = Path(cwd).name
+        await service.populate_session_metadata()
+        from src.ui.menus import (
+            attach_success_title,
+            format_attached_session,
+        )
+
+        session_info = service.get_session_info()
+        await msg.edit_text(
+            format_attached_session(
+                session_info,
+                fallback_session_id=service.session_id,
+                fallback_cwd=service.get_working_directory(),
+                fallback_model=service.current_model,
+                prefix=attach_success_title(target),
+            ),
+        )
+    except RuntimeError as e:
+        text = str(e)
+        if "request in progress" in text:
+            await msg.edit_text("⏳ Please wait — a request is in progress.")
+        elif target == "last" and "no sessions" in text.lower():
+            await msg.edit_text("📭 No Copilot sessions found.")
+        else:
+            await msg.edit_text(f"⚠️ Failed to attach session: {e}")
+    except Exception as e:
+        logger.error(f"/attach failed: {e}", exc_info=True)
+        await msg.edit_text(f"⚠️ Failed to attach session: {e}")
+
+
 async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Session management: /session [info|files|plan]."""
     if not await security_check(update): return

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `/agent` command to list, select, deselect, and reload specialized custom agents from `.agent.md` files.
+- `/resume` command with a paginated session picker, detail cards, and attach actions for continuing previous Copilot sessions from Telegram.
 - `/autopilot` command for highly autonomous execution mode (best paired with `/allowall`).
 - `/session files` and `/session plan` subcommands to inspect session workspace artifacts and the active session plan when infinite sessions are enabled.
 - `/skills` command to list and reload reusable prompt modules from Copilot CLI-compatible skill roots.
