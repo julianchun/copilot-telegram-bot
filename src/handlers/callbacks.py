@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from src.config import WORKSPACE_PATH
 from src.core.service import service
+from src.core.session_metadata import metadata_value
 from src.handlers.messages import PENDING_INTERACTIONS
 from src.handlers.utils import security_check
 
@@ -388,15 +389,6 @@ async def _handle_sessions_page_callback(query, context):
         await query.edit_message_text(text)
 
 
-def _session_value(session, *names, default=None):
-    for name in names:
-        if isinstance(session, dict) and name in session:
-            return session[name]
-        if hasattr(session, name):
-            return getattr(session, name)
-    return default
-
-
 async def _handle_session_attach_callback(query, context):
     """Handle sessattach: callback queries."""
     target = query.data.split(":", 1)[1]
@@ -457,7 +449,7 @@ async def _handle_session_detail_callback(query, context):
         session = next(
             (
                 item for item in sessions
-                if _session_value(item, "sessionId", "session_id", default=None) == session_id
+                if metadata_value(item, "sessionId", "session_id", default=None) == session_id
             ),
             None,
         )

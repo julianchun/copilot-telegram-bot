@@ -315,6 +315,17 @@ class TestAttachSession:
             else:
                 raise AssertionError("attach_session should reject while chat lock is held")
 
+    async def test_attach_last_rejects_during_chat(self):
+        svc = FakeService()
+
+        async with svc._chat_lock:
+            try:
+                await svc.attach_last_session()
+            except RuntimeError as e:
+                assert "request in progress" in str(e)
+            else:
+                raise AssertionError("attach_last_session should reject while chat lock is held")
+
     async def test_attach_uses_resume_with_pending_work_and_shared_options(self, tmp_path):
         svc = FakeService()
         target_dir = tmp_path / "target" / "project"
@@ -376,32 +387,58 @@ class TestAttachSession:
         svc.client.resume_session.assert_not_awaited()
         assert svc.session is old_session
 
-    async def test_attach_resume_only_sends_model_when_user_selected(self):
+    async def test_attach_requires_metadata_with_cwd(self):
+        svc = FakeService()
+        old_session = svc.session
+        svc.client.get_session_metadata = AsyncMock(return_value=None)
+        svc.client.resume_session = AsyncMock()
+
+        with pytest.raises(RuntimeError, match="metadata is missing cwd"):
+            await svc.attach_session("session-456")
+
+        svc.client.resume_session.assert_not_awaited()
+        assert svc.session is old_session
+
+    async def test_attach_resume_sends_model_when_user_selected(self, tmp_path):
         svc = FakeService()
         svc.user_selected_model = "claude-sonnet-4"
+        target_dir = tmp_path / "target" / "project"
+        target_dir.mkdir(parents=True)
         new_session = MagicMock()
         new_session.session_id = "session-456"
         new_session.on = MagicMock(return_value=lambda: None)
         svc.client.resume_session = AsyncMock(return_value=new_session)
-        svc.client.get_session_metadata = AsyncMock(return_value=None)
+        svc.client.get_session_metadata = AsyncMock(return_value=SimpleNamespace(
+            sessionId="session-456",
+            context=SimpleNamespace(cwd=str(target_dir)),
+        ))
 
-        await svc.attach_session("session-456")
+        with patch("src.core.session.WORKSPACE_PATH", tmp_path), \
+             patch("src.core.session.GRANTED_PROJECT_PATHS", []):
+            await svc.attach_session("session-456")
 
         _, kwargs = svc.client.resume_session.await_args
         assert kwargs["model"] == "claude-sonnet-4"
-        assert "working_directory" not in kwargs
+        assert kwargs["working_directory"] == str(target_dir.resolve())
 
-    async def test_failed_attach_leaves_existing_session_intact(self):
+    async def test_failed_attach_leaves_existing_session_intact(self, tmp_path):
         svc = FakeService()
         old_session = svc.session
-        svc.client.get_session_metadata = AsyncMock(return_value=None)
+        target_dir = tmp_path / "target" / "project"
+        target_dir.mkdir(parents=True)
+        svc.client.get_session_metadata = AsyncMock(return_value=SimpleNamespace(
+            sessionId="missing",
+            context=SimpleNamespace(cwd=str(target_dir)),
+        ))
         svc.client.resume_session = AsyncMock(side_effect=RuntimeError("not found"))
 
-        try:
-            await svc.attach_session("missing")
-        except RuntimeError:
-            pass
-        else:
-            raise AssertionError("attach_session should surface resume failures")
+        with patch("src.core.session.WORKSPACE_PATH", tmp_path), \
+             patch("src.core.session.GRANTED_PROJECT_PATHS", []):
+            try:
+                await svc.attach_session("missing")
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("attach_session should surface resume failures")
 
         assert svc.session is old_session

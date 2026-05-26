@@ -18,6 +18,7 @@ from src.config import (
     WORKSPACE_PATH,
 )
 from src.core.context import ctx
+from src.core.session_metadata import metadata_value
 from src.core.usage import SessionUsageTracker, SessionInfo
 
 from copilot.session import PermissionHandler
@@ -119,14 +120,6 @@ class SessionMixin:
             "working_directory": str(active_root),
         }
 
-    def _metadata_value(self, item: Any, *names: str) -> Any:
-        for name in names:
-            if isinstance(item, dict) and name in item:
-                return item[name]
-            if hasattr(item, name):
-                return getattr(item, name)
-        return None
-
     def _allowed_workspace_roots(self) -> list[Path]:
         """Return configured roots that resumed sessions may attach to."""
         return list(dict.fromkeys([
@@ -134,11 +127,13 @@ class SessionMixin:
             *[path.resolve() for path in GRANTED_PROJECT_PATHS],
         ]))
 
-    def _workspace_path_from_metadata(self, metadata: Any | None) -> Path | None:
+    def _workspace_path_from_metadata(self, metadata: Any | None, *, require_cwd: bool = False) -> Path | None:
         """Return the session cwd as a validated local workspace root."""
-        context = self._metadata_value(metadata, "context") if metadata else None
-        target_cwd = self._metadata_value(context, "cwd") if context else None
+        context = metadata_value(metadata, "context") if metadata else None
+        target_cwd = metadata_value(context, "cwd") if context else None
         if not target_cwd:
+            if require_cwd:
+                raise RuntimeError("session metadata is missing cwd; cannot safely attach")
             return None
 
         target_path = Path(str(target_cwd)).expanduser().resolve()
@@ -157,7 +152,7 @@ class SessionMixin:
 
     def _build_resume_session_options(self, metadata: Any | None) -> tuple[dict[str, Any], Path | None]:
         """Return SDK options for resume without overwriting target session state."""
-        target_workspace = self._workspace_path_from_metadata(metadata)
+        target_workspace = self._workspace_path_from_metadata(metadata, require_cwd=True)
         options = self._build_session_options(target_workspace)
 
         if target_workspace:
@@ -177,19 +172,19 @@ class SessionMixin:
         """Populate display metadata from SDK SessionMetadata when available."""
         if not metadata:
             return
-        self.session_info.session_id = self._metadata_value(metadata, "sessionId", "session_id") or self.session_info.session_id
-        self.session_info.name = self._metadata_value(metadata, "summary", "name")
-        self.session_info.created = self._metadata_value(metadata, "startTime", "created")
-        self.session_info.modified = self._metadata_value(metadata, "modifiedTime", "modified")
-        context = self._metadata_value(metadata, "context")
+        self.session_info.session_id = metadata_value(metadata, "sessionId", "session_id") or self.session_info.session_id
+        self.session_info.name = metadata_value(metadata, "summary", "name")
+        self.session_info.created = metadata_value(metadata, "startTime", "created")
+        self.session_info.modified = metadata_value(metadata, "modifiedTime", "modified")
+        context = metadata_value(metadata, "context")
         if context:
             workspace_path = self._workspace_path_from_metadata(metadata)
             if workspace_path:
                 ctx.set_root(workspace_path)
-            self.session_info.cwd = self._metadata_value(context, "cwd") or self.session_info.cwd
-            self.session_info.branch = self._metadata_value(context, "branch") or self.session_info.branch
-            self.session_info.git_root = self._metadata_value(context, "gitRoot", "git_root") or self.session_info.git_root
-            self.session_info.repository = self._metadata_value(context, "repository") or self.session_info.repository
+            self.session_info.cwd = metadata_value(context, "cwd") or self.session_info.cwd
+            self.session_info.branch = metadata_value(context, "branch") or self.session_info.branch
+            self.session_info.git_root = metadata_value(context, "gitRoot", "git_root") or self.session_info.git_root
+            self.session_info.repository = metadata_value(context, "repository") or self.session_info.repository
 
     def _activate_session(self, session, *, metadata: Any | None = None, workspace_path: Path | None = None) -> None:
         """Reset local Telegram state for a newly active SDK session handle."""
@@ -425,12 +420,23 @@ class SessionMixin:
         await self._ensure_client_running()
         return await self.client.list_sessions()
 
+    def _chat_lock_has_waiters(self) -> bool:
+        waiters = getattr(self._chat_lock, "_waiters", None)
+        return bool(waiters and any(not waiter.cancelled() for waiter in waiters))
+
+    async def _acquire_chat_lock_nowait(self) -> None:
+        """Acquire chat lock immediately or raise if another request is active."""
+        if self._chat_lock.locked() or self._chat_lock_has_waiters():
+            raise RuntimeError("request in progress")
+        await self._chat_lock.acquire()
+
     async def attach_session(self, session_id: str, continue_pending_work: bool = True):
         """Attach Telegram to an existing SDK session without deleting it on failure."""
-        if self._chat_lock.locked():
-            raise RuntimeError("request in progress")
-        async with self._chat_lock:
+        await self._acquire_chat_lock_nowait()
+        try:
             return await self._attach_session_unlocked(session_id, continue_pending_work)
+        finally:
+            self._chat_lock.release()
 
     async def _attach_session_unlocked(self, session_id: str, continue_pending_work: bool = True):
         """Attach to a session while the caller holds _chat_lock."""
@@ -478,14 +484,15 @@ class SessionMixin:
 
     async def attach_last_session(self):
         """Attach to the most recently modified session."""
-        if self._chat_lock.locked():
-            raise RuntimeError("request in progress")
-        async with self._chat_lock:
+        await self._acquire_chat_lock_nowait()
+        try:
             await self._ensure_client_running()
             session_id = await self.client.get_last_session_id()
             if not session_id:
                 raise RuntimeError("no sessions found")
             return await self._attach_session_unlocked(session_id)
+        finally:
+            self._chat_lock.release()
 
     async def _permission_bridge(self, input_data, invocation):
         """Bridge between SDK on_pre_tool_use and Telegram permission UI."""

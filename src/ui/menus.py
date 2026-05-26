@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable, List, Dict, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from src.config import GRANTED_PROJECT_PATHS, TELEGRAM_MSG_LIMIT
+from src.core.session_metadata import metadata_value
 
 
 SELECTION_BUTTON_COLUMNS = 3
@@ -227,12 +228,7 @@ def get_model_keyboard(models_data: List[Dict[str, Any]], current_model: str | N
 
 
 def _session_attr(item: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if isinstance(item, dict) and name in item:
-            return item[name]
-        if hasattr(item, name):
-            return getattr(item, name)
-    return default
+    return metadata_value(item, *names, default=default)
 
 
 def short_session_id(session_id: str | None) -> str:
@@ -491,6 +487,8 @@ def _command_reference() -> str:
         "Session Control\n"
         "/model - Switch AI Model\n"
         "/skills - List & inspect available skills\n"
+        "/resume - Continue a previous Copilot session\n"
+        "/attach - Attach to a Copilot session\n"
         "/clear - Reset conversation memory\n"
         "/cancel - Cancel in-progress request\n"
         "/share - Export session to Markdown\n"
@@ -509,13 +507,16 @@ def _command_reference() -> str:
 
 
 def get_start_splash_content(auth_status: str, cli_version: str, sdk_version: str = "") -> str:
-    """Minimal start splash — bot identity + project picker prompt. No commands."""
+    """Minimal start splash with bot identity, project picker prompt, and key commands."""
     sdk_line = f"SDK version: {sdk_version}\n" if sdk_version else ""
     return (
         f"🚀 Copilot CLI-Telegram\n"
         f"User: {auth_status}\n"
         f"CLI version: {cli_version}\n"
         f"{sdk_line}\n"
+        "Quick Commands\n"
+        "/agent - View and select custom agents\n"
+        "/resume - Continue a previous Copilot session\n\n"
         "⚠️ Select a project to begin."
     )
 
