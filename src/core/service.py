@@ -53,10 +53,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         # Initialize context root
         ctx.set_root(WORKSPACE_PATH)
 
-        self.client = CopilotClient(SubprocessConfig(
-            cwd=str(ctx.root_path),
-            github_token=GITHUB_TOKEN or None,
-        ))
+        self.client = self._build_client(ctx.root_path)
 
         self.session = None  # type: ignore[assignment]
         self.session_id: str = str(uuid.uuid4())[:8]
@@ -97,6 +94,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         # Usage tracking (accumulates from SDK events)
         self.usage_tracker = SessionUsageTracker()
 
+    def _build_client(self, cwd: Path | str | None = None) -> CopilotClient:
+        """Create a Copilot client managed by the bot subprocess."""
+        return CopilotClient(SubprocessConfig(
+            cwd=str(cwd or ctx.root_path),
+            github_token=GITHUB_TOKEN or None,
+        ))
+
     # ── Working directory ─────────────────────────────────────────────
 
     async def set_working_directory(self, path: str) -> str:
@@ -132,10 +136,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             ctx.set_root(p)
             self.session_info = SessionInfo()
 
-            self.client = CopilotClient(SubprocessConfig(
-                cwd=str(p),
-                github_token=GITHUB_TOKEN or None,
-            ))
+            self.client = self._build_client(p)
             logger.info(f"🔄 CopilotClient re-initialized with CWD: {p}")
 
             logger.info("Starting Copilot Client with new CWD...")
@@ -390,7 +391,8 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_labels.get(self.current_mode, "Chat")
         agent_line = f"🤖 Agent: {self.current_agent}\n" if self.current_agent else ""
-        path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
+        display_cwd = self.session_info.cwd or str(ctx.root_path)
+        path_str = display_cwd.replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch_line = f"🔀 Branch: {git_info[1:]}\n" if git_info else ""
         tree = self.get_project_structure()
@@ -411,12 +413,13 @@ class CopilotService(EventHandlerMixin, SessionMixin):
         model = self.user_selected_model or self.current_model or "Auto"
         mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_labels.get(self.current_mode, "Chat")
-        path_str = str(ctx.root_path).replace(os.path.expanduser("~"), "~")
+        display_cwd = self.session_info.cwd or str(ctx.root_path)
+        path_str = display_cwd.replace(os.path.expanduser("~"), "~")
         git_info = await self.get_git_info()
         branch = git_info[1:] if git_info else ""
-        file_count, folder_count = get_project_stats(self.session_info.cwd)
+        file_count, folder_count = get_project_stats(display_cwd)
         return get_cockpit_content(
-            project_name=self.project_name or Path(self.session_info.cwd).name,
+            project_name=self.project_name or Path(display_cwd).name,
             model=model,
             mode=mode,
             path=path_str,
@@ -428,11 +431,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     def get_directory_listing(self) -> str:
         """Returns flat list of current directory content."""
-        return get_directory_listing(self.session_info.cwd)
+        return get_directory_listing(self.session_info.cwd or str(ctx.root_path))
 
     def get_project_structure(self, max_depth: int = 2) -> str:
         """Returns nested project structure with file sizes."""
-        return get_project_structure(self.session_info.cwd, max_depth)
+        return get_project_structure(self.session_info.cwd or str(ctx.root_path), max_depth)
 
     # ── Mode switching ──────────────────────────────────────────────
 

@@ -22,6 +22,7 @@ Work from anywhere—coffee shops, transit, home—with real-time access to GitH
 ### 📱 Mobile-First UX
 Forget typing long commands. We use **Telegram Inline Keyboards** for high-frequency actions:
 - **Project Switcher:** Instantly switch between defined projects in your workspace via `/start`.
+- **Session Resume Picker:** Browse previous Copilot sessions with `/resume`, inspect details, and continue one from Telegram.
 - **Interactive Permissions:** "Allow" or "Deny" tool execution (e.g., file writes, shell commands) with a single tap.
 - **Smart Options:** When the model asks for clarification, reply via multiple-choice buttons.
 
@@ -183,12 +184,15 @@ After selecting a project, a **cockpit message** appears with:
 | `/clear` | Reset conversation memory. |
 | `/share` | Export full session to Markdown file. |
 | `/session` | Session management entry point: info, workspace files, and plan inspection. |
+| `/resume` | Browse previous Copilot sessions and continue one from Telegram. |
+| `/attach <session_id\|last>` | Advanced shortcut to resume a specific session ID or the latest session. |
 | `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
 | `/context` | Display model context and token usage info. |
 
 **Configuration & Extensions**
 | Command | Description |
 | :--- | :--- |
+| `/agent` | List, select, deselect, or reload specialized custom agents discovered from `.agent.md` files. |
 | `/allowall` | Toggle auto-approval for tool permission prompts in the current session. |
 | `/instructions` | Show custom instruction status and inline actions for view, clear, and generate. |
 | `/init` | Ask Copilot to generate `.github/copilot-instructions.md` for the active project. |
@@ -213,10 +217,17 @@ After selecting a project, a **cockpit message** appears with:
 - Personal skills are loaded from `~/.copilot/skills` and `~/.agents/skills`.
 - `/skills reload` asks the SDK to rescan those roots so newly added skills show up without reselecting the project.
 
+### Custom Agents
+- `/agent` opens a selector for specialized agents discovered from project and personal `.agent.md` files.
+- Agents are independent of operation modes, so you can stay in Edit, Plan, or Autopilot mode while using a domain-specific agent.
+- `/agent reload` asks the SDK to rescan agent definitions after adding or editing agent files.
+
 ### Session Management
 - `/session` or `/session info` shows the live session summary: session ID, mode, model, request count, workspace path, branch, quota, and usage totals.
 - `/session files` lists artifacts stored in the session workspace `files/` directory when infinite sessions are enabled.
 - `/session plan` shows the current `plan.md` inline, or sends it as a file when it is too large for a Telegram message.
+- `/resume` opens a paginated resume picker for previous Copilot sessions. Each page shows six sessions with compact local timestamps, number-only detail buttons, and a detail screen with actions to attach or go back. Sessions can only attach when their workspace is inside `WORKSPACE_ROOT` or `GRANTED_PROJECTS`.
+- `/attach <session_id|last>` skips the picker and resumes a specific session directly. This is useful when you already copied a session ID or just want the most recently modified session.
 
 ## 🔧 Under the Hood
 <details>
@@ -225,7 +236,7 @@ After selecting a project, a **cockpit message** appears with:
 This bot is built on top of the **`github-copilot-sdk` v0.3.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
 - **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
-- **Session Lifecycle:** Manages session creation, expiration detection, context compaction, and automatic recovery. Model changes use `session.set_model()` with graceful fallback to session reset.
+- **Session Lifecycle:** Manages session creation, expiration detection, context compaction, automatic recovery, and previous-session resume via `resume_session()`. Model changes use `session.set_model()` with graceful fallback to session reset.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
 - **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
 </details>
@@ -304,6 +315,7 @@ Three-layer, event-driven design under [src/](src/):
 ## ⚠️ Limitations
 - **Single-user only** — designed for personal use with one `ALLOWED_USER_ID`
 - **Project switching restarts session** — the SDK requires a fresh `CopilotClient` process per working directory, so switching projects clears conversation history
+- **Session resume is not live remote control** — `/resume` continues a previous session from Telegram, but it does not live-sync messages typed in another Copilot UI/TUI, or mirror Telegram messages back into that UI in real time.
 
 
 ## License

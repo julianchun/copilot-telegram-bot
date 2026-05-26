@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from src.config import WORKSPACE_PATH
 from src.core.service import service
+from src.core.session_metadata import metadata_value
 from src.handlers.messages import PENDING_INTERACTIONS
 from src.handlers.utils import security_check
 
@@ -375,6 +376,103 @@ async def _handle_instructions_callback(query, update, context):
         await chat_handler(update, context, override_text=prompt)
 
 
+async def _handle_sessions_page_callback(query, context):
+    """Handle sessions_page: callback queries."""
+    from src.ui.menus import get_sessions_menu
+
+    page = int(query.data.split(":")[1])
+    sessions = await service.list_copilot_sessions()
+    text, keyboard = get_sessions_menu(sessions, page=page)
+    if keyboard:
+        await query.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await query.edit_message_text(text)
+
+
+async def _handle_session_attach_callback(query, context):
+    """Handle sessattach: callback queries."""
+    target = query.data.split(":", 1)[1]
+    if not target:
+        await query.edit_message_text("⚠️ Invalid session selection.")
+        return
+    try:
+        if target == "last":
+            await service.attach_last_session()
+        else:
+            await service.attach_session(target)
+
+        service.project_selected = True
+        session_info = service.get_session_info()
+        cwd = session_info.cwd or service.get_working_directory()
+        if cwd:
+            service.project_name = Path(cwd).name
+        await service.populate_session_metadata()
+        session_info = service.get_session_info()
+        session_id = session_info.session_id or target
+        from src.ui.menus import (
+            attach_success_title,
+            format_attached_session,
+        )
+
+        await query.edit_message_text(
+            format_attached_session(
+                session_info,
+                fallback_session_id=session_id,
+                fallback_cwd=cwd,
+                fallback_model=service.current_model,
+                prefix=attach_success_title(target),
+            ),
+        )
+    except RuntimeError as e:
+        text = str(e)
+        if "request in progress" in text:
+            await query.edit_message_text("⏳ Please wait — a request is in progress.")
+        elif target == "last" and "no sessions" in text.lower():
+            await query.edit_message_text("📭 No Copilot sessions found.")
+        else:
+            await query.edit_message_text(f"⚠️ Failed to attach session: {e}")
+    except Exception as e:
+        logger.error(f"Session attach callback failed: {e}", exc_info=True)
+        await query.edit_message_text(f"⚠️ Failed to attach session: {e}")
+
+
+async def _handle_session_detail_callback(query, context):
+    """Handle sessdetail: callback queries."""
+    session_id = query.data.split(":", 1)[1]
+    if not session_id:
+        await query.edit_message_text("⚠️ Invalid session selection.")
+        return
+
+    session = None
+    try:
+        sessions = await service.list_copilot_sessions()
+        session = next(
+            (
+                item for item in sessions
+                if metadata_value(item, "sessionId", "session_id", default=None) == session_id
+            ),
+            None,
+        )
+    except Exception as e:
+        logger.debug(f"Could not refresh sessions for detail view: {e}")
+
+    if session is None:
+        current = service.get_session_info()
+        if current and (current.session_id == session_id or service.session_id == session_id):
+            session = current
+
+    if session is None:
+        await query.edit_message_text("⚠️ Session details are no longer available.")
+        return
+
+    from src.ui.menus import format_session_detail, get_session_detail_actions
+
+    await query.edit_message_text(
+        format_session_detail(session),
+        reply_markup=get_session_detail_actions(session_id),
+    )
+
+
 async def _handle_plan_callback(query, context):
     """Handle plan: callback queries (exit_plan_mode approval)."""
     parts = query.data.split(":", 2)
@@ -455,6 +553,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _handle_reasoning_callback(query, context)
         elif data.startswith("instr:"):
             await _handle_instructions_callback(query, update, context)
+        elif data.startswith("sessions_page:"):
+            await _handle_sessions_page_callback(query, context)
+        elif data.startswith("sessattach:"):
+            await _handle_session_attach_callback(query, context)
+        elif data.startswith("sessdetail:"):
+            await _handle_session_detail_callback(query, context)
         elif data.startswith("projpage:"):
             await _handle_project_page_callback(query, context)
             return ConversationHandler.END
