@@ -38,14 +38,17 @@ def test_get_input_selection_menu_paginates_long_lists():
 def test_get_model_menu_marks_current_model_in_text_and_button():
     text, keyboard = get_model_menu(
         [
-            {"id": "gpt-4.1", "multiplier": "1x"},
-            {"id": "claude-sonnet-4.5", "multiplier": "2x"},
+            {"id": "gpt-5.4"},
+            {"id": "claude-sonnet-4.5"},
         ],
         current_model="claude-sonnet-4.5",
     )
 
-    assert "1. gpt-4.1 (1x)" in text
-    assert "2. claude-sonnet-4.5 (2x) ✅" in text
+    assert "Pricing:" not in text
+    assert "models-and-pricing" not in text
+    assert "1. gpt-5.4" in text
+    assert "1. gpt-5.4 (" not in text
+    assert "2. claude-sonnet-4.5 ✅" in text
 
     flat = [button for row in keyboard.inline_keyboard for button in row]
     selected = next(button for button in flat if button.callback_data == "model:claude-sonnet-4.5")

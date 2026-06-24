@@ -22,20 +22,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - System message `"customize"` mode with `tone` section override for Telegram-specific formatting
 
 ### Changed
-- Upgraded `github-copilot-sdk` from v0.2.0 to v0.3.0.
+- Upgraded `github-copilot-sdk` from v0.3.0 to v1.0.0.
+- Replaced `SubprocessConfig` client construction with the v1 `CopilotClient(..., connection=RuntimeConnection.for_stdio())` shape.
+- Session export now uses v1 `session.get_events()` instead of the removed message export path.
+- Session metadata display now accepts v1 snake_case fields plus old camelCase/dict shapes.
+- MCP local server configs normalize legacy `cwd` to v1 `working_directory` while leaving HTTP/SSE configs unchanged.
+- Permission handling now uses v1 `on_permission_request` decision objects, with bounded read-only requests auto-approved and URL/shell/write/MCP/custom requests routed through Telegram.
+- Exit-plan approve/reject/edit buttons now resolve the SDK pending request through the v1 UI RPC.
 - Migrated Plan/Edit/Autopilot mode switching to use the native SDK Mode API (`session.rpc.mode.set()`), cleanly separating modes from custom agents.
 - Refactored `/session` into a session-management entry point: `/session` and `/session info` show the full session summary, while `/session files` lists workspace files and `/session plan` renders `plan.md` inline or as an attachment when needed.
 - Session metadata lookup now uses `get_session_metadata()` instead of scanning `list_sessions()`.
 - Session creation now combines SDK config discovery with explicit Copilot CLI-compatible `skill_directories` so `.claude/skills`, `.agents/skills`, and personal skill folders load like the CLI.
-- `CopilotClient` constructor now uses `SubprocessConfig` dataclass
 - `create_session()` / `resume_session()` use keyword arguments instead of config dict
 - `send_and_wait()` takes positional `prompt` string instead of dict
 - Mode state centralized in `service.current_mode` instead of scattered across handler `user_data`
+- Usage displays now prefer SDK-reported AI credits and token totals instead of legacy premium-request multiplier costs.
 
 ### Removed
 - Outdated custom agent "hack" for Plan/Edit modes.
 - Placeholder `skills/` folder from the project root.
 - Per-message prompt injection (`_MODE_INSTRUCTIONS` / `_PLAN_PROMPT` / `_GENERAL_PROMPT`)
+- Hook-based `on_pre_tool_use` permission allowlist bridge.
 - `_extract_session_start_context()` workaround — replaced by `on_event` handler
 - Unused `GITHUB_TOKEN` import in session.py
 - Dead `_event_unsubscribe` field — `on_event` handler lifecycle is managed by the SDK
@@ -53,7 +60,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] - 2026-02-14
 
 ### Added
-- Session usage tracking and per-model token/cost metrics (`/usage` command)
+- Session usage tracking and per-model token/AI-credit metrics (`/usage` command)
 - Code review cleanups and bug fixes across the codebase
 
 ### Changed
@@ -84,4 +91,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Interactive permissions via Telegram inline keyboards
 - Multimodal vision support (image attachments)
 - Mobile-first UX with inline keyboards for project switching and tool approval
-- Developer HUD footer with model, mode, branch, and cost info
+- Developer HUD footer with model, mode, and branch info

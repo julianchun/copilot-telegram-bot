@@ -17,7 +17,7 @@ def test_start_splash_includes_agent_and_resume_commands():
 def test_cockpit_command_reference_includes_agent_and_resume():
     content = get_cockpit_content(
         project_name="todo-app",
-        model="gpt-4.1",
+        model="gpt-5.4",
         mode="Chat",
         path="/tmp/todo-app",
         branch="main",
@@ -33,7 +33,7 @@ def test_help_command_reference_includes_agent_and_resume():
     content = get_help_content(
         auth_status="authorized",
         version="1.0.0",
-        current_model="gpt-4.1",
+        current_model="gpt-5.4",
         cwd="/tmp/todo-app",
         project_selected=True,
     )

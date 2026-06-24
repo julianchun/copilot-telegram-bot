@@ -5,7 +5,7 @@
 Work from anywhere—coffee shops, transit, home—with real-time access to GitHub Copilot. This bot brings the Copilot CLI experience to Telegram. Built on the `github-copilot-sdk`, it's mobile-first, permission-aware, and security-focused.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![SDK](https://img.shields.io/badge/Copilot_SDK-v0.3.0-black)
+![SDK](https://img.shields.io/badge/Copilot_SDK-v1.0.0-black)
 ![Manager](https://img.shields.io/badge/uv-managed-purple)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
@@ -36,7 +36,7 @@ Every response is equipped with a **Real-time Context Footer**, giving you criti
 >```
 >📂 webproject
 >🔀 feature/auth*
->🤖 gpt-5.2 (1.00x)
+>🤖 gpt-5.2
 >⚙️ Mode: Planning
 >```
 
@@ -123,10 +123,10 @@ Connect external [MCP (Model Context Protocol)](https://modelcontextprotocol.io/
     **Server types:**
     | Type | Fields | Use case |
     | :--- | :--- | :--- |
-    | `local` / `stdio` | `command`, `args`, `env`, `cwd` | Local process (spawned as subprocess) |
+    | `local` / `stdio` | `command`, `args`, `env`, `working_directory` | Local process (spawned as subprocess) |
     | `http` / `sse` | `url`, `headers` | Remote HTTP or SSE endpoint |
     
-    Set `"tools": ["*"]` to expose all tools from a server, or list specific tool names. If the config file is missing or has no `mcpServers` key, the bot starts normally without MCP.
+    Set `"tools": ["*"]` to expose all tools from a server, or list specific tool names. Legacy local-server `cwd` values are still accepted and normalized to `working_directory`. If the config file is missing or has no `mcpServers` key, the bot starts normally without MCP.
     
     ### GitHub Authentication
     
@@ -161,7 +161,7 @@ The bot launches into a **startup splash** showing:
 - **Project selection keyboard** (2-column grid with a "Create project" button)
 
 After selecting a project, a **cockpit message** appears with:
-- Current model + billing multiplier
+- Current model
 - Active mode (Plan/Edit)
 - Branch name + dirty status
 - File/folder count in workspace
@@ -180,13 +180,13 @@ After selecting a project, a **cockpit message** appears with:
 **Session & Context**
 | Command | Description |
 | :--- | :--- |
-| `/model` | Hot-swap the underlying LLM (e.g., `gpt-4.1`). Conversation history is preserved. |
+| `/model` | Hot-swap the underlying LLM. Conversation history is preserved. |
 | `/clear` | Reset conversation memory. |
 | `/share` | Export full session to Markdown file. |
 | `/session` | Session management entry point: info, workspace files, and plan inspection. |
 | `/resume` | Browse previous Copilot sessions and continue one from Telegram. |
 | `/attach <session_id\|last>` | Advanced shortcut to resume a specific session ID or the latest session. |
-| `/usage` | Display detailed session metrics — per-model token breakdown, cost, quota snapshots. |
+| `/usage` | Display detailed session metrics — AI credits, per-model token breakdown, and quota snapshots. |
 | `/context` | Display model context and token usage info. |
 
 **Configuration & Extensions**
@@ -223,7 +223,7 @@ After selecting a project, a **cockpit message** appears with:
 - `/agent reload` asks the SDK to rescan agent definitions after adding or editing agent files.
 
 ### Session Management
-- `/session` or `/session info` shows the live session summary: session ID, mode, model, request count, workspace path, branch, quota, and usage totals.
+- `/session` or `/session info` shows the live session summary: session ID, mode, model, LLM call count, workspace path, branch, quota, and usage totals.
 - `/session files` lists artifacts stored in the session workspace `files/` directory when infinite sessions are enabled.
 - `/session plan` shows the current `plan.md` inline, or sends it as a file when it is too large for a Telegram message.
 - `/resume` opens a paginated resume picker for previous Copilot sessions. Each page shows six sessions with compact local timestamps, number-only detail buttons, and a detail screen with actions to attach or go back. Sessions can only attach when their workspace is inside `WORKSPACE_ROOT` or `GRANTED_PROJECTS`.
@@ -233,23 +233,24 @@ After selecting a project, a **cockpit message** appears with:
 <details>
 <summary><strong>Click to expand technical details</strong></summary>
 
-This bot is built on top of the **`github-copilot-sdk` v0.3.0**, which manages a `CopilotClient` process communicating via JSON-RPC over stdio.
+This bot is built on top of the **`github-copilot-sdk` v1.0.0**, with `CopilotClient` connected through the SDK's stdio runtime transport.
 - **Event-Driven:** Processes SDK events (`ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START`, `SESSION_IDLE`, `SESSION_USAGE_INFO`) through an async event handler registered via `on_event` in `create_session()`, ensuring early events like `SESSION_START` are never missed.
 - **Native Mode Switching:** Plan/Autopilot/Edit modes are implemented using the native SDK Mode API (`session.rpc.mode.set()`). This cleanly separates operational modes from Custom Agents, preserving conversation history across mode switches while allowing you to simultaneously use a custom agent (via `/agent`).
-- **Session Lifecycle:** Manages session creation, expiration detection, context compaction, automatic recovery, and previous-session resume via `resume_session()`. Model changes use `session.set_model()` with graceful fallback to session reset.
+- **Session Lifecycle:** Manages session creation, expiration detection, context compaction, automatic recovery, and previous-session resume via `resume_session()`. Model changes use `session.set_model()` and session export uses SDK event history from `get_events()`.
 - **Multimodal Encoding:** Encodes image attachments for the Copilot API, enabling visual reasoning capabilities.
-- **Permission Bridge:** Intercepts tool invocations via `on_pre_tool_use` hook, routing dangerous operations through Telegram inline keyboards for human approval. The same callback-safe interaction path is used for normal chats and inline actions like `/instructions` → `Generate`.
+- **Permission Bridge:** Handles v1 `on_permission_request` events, auto-approves bounded read-only file reads, and routes URL, shell, write, MCP, memory, hook, and custom-tool requests through Telegram inline keyboards.
+- **Plan Approval:** Keeps the exit-plan review UX in Telegram while resolving SDK pending plan requests through the v1 UI RPC.
 </details>
 
 ## ⚡ How Permissions Work
 
-The bot uses a **two-tier permission model**:
+The bot uses the SDK v1 permission model:
 
-**Auto-approved tools** (seamless, no interruption):
-`list_files`, `read_file`, `view`, `glob`, `report_intent`, `task`, `update_todo`, `ask_user`, `fetch_copilot_cli_documentation`
+**Auto-approved requests** (seamless, no interruption):
+bounded read-only file reads inside allowed workspace roots.
 
 **Requires explicit approval** (inline keyboard prompt):
-`bash`, `edit`, `create`, and any other tool not in the allowlist.
+URL opens, shell commands, file writes, MCP tool calls, memory changes, hooks, custom tools, and any request that is not a bounded read.
 
 **The Permission Flow** (for dangerous tools):
 
@@ -263,11 +264,11 @@ You click "Allow" directly in Telegram
 Agent executes and continues processing
 ```
 
-Safe, read-only operations proceed automatically so you're not tapping "Allow" on every file read. Dangerous operations always pause and wait for your explicit approval.
+Safe, read-only operations proceed automatically so you're not tapping "Allow" on every file read. Riskier operations pause and wait for your explicit approval.
 
 **Permission Dialog Examples:**
-- **Shell Command**: "🛡️ Permission request: **bash** with: `npm install` — Allow?"
-- **File Write**: "🛡️ Permission request: **edit** with: `['src/app.ts']` — Allow?"
+- **Shell Command**: "🛡️ Permission request: **shell** with: `npm install` — Allow?"
+- **File Write**: "🛡️ Permission request: **write** with: `src/app.ts` — Allow?"
 - **Model Selection**: Click `/model` → buttons appear → select your LLM → reasoning effort picker (for supported models) → model switches without losing conversation
 - **Agent Questions**: "❓ **Copilot Asks:** What's your preferred testing framework? [Jest] [Vitest] [Cancel]"
 
@@ -277,10 +278,10 @@ This keeps you **in the loop** on critical actions while maintaining a smooth fl
 By default, Autopilot mode still pauses to ask for your permission before executing dangerous commands (like `npm install`). 
 
 For a fully autonomous, hands-free experience:
-1. Type `/allowall` (Tells the bot: "Auto-approve all security prompts").
+1. Type `/allowall` (Tells the bot: "Auto-approve non-URL security prompts for this session").
 2. Type `/autopilot build me a react login page` (Tells the AI: "Take initiative and build this").
 
-With both active, Copilot will plan the feature, create the files, install dependencies, and run tests continuously without stopping to ask you for a single button tap!
+With both active, Copilot can plan the feature, create files, install dependencies, and run tests continuously. URL permission requests still pause for explicit Telegram approval.
 
 ## 🏗️ Architecture
 <details>
@@ -292,10 +293,10 @@ Three-layer, event-driven design under [src/](src/):
   
 - **[src/core/](src/core/)** — SDK & State Management:
   - **[service.py](src/core/service.py)**: `CopilotService` singleton. Manages high-level chat flow with 4 callbacks, mode switching via the native SDK Mode API (`set_mode()`), custom agent selection via the SDK Agent API, and project info display.
-  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the **permission bridge** with tool allowlist + `on_pre_tool_use` hook. Configures system message customization and handles loading custom agent profiles and skills from the workspace.
+  - **[session.py](src/core/session.py)**: `SessionMixin` — manages `CopilotClient` lifecycle, registers SDK event handlers via `on_event`, implements the v1 **permission bridge** with `on_permission_request`, normalizes MCP config, and configures system message customization, tools, and skill roots.
   - **[events.py](src/core/events.py)**: SDK event dispatcher. Handles `ASSISTANT_MESSAGE`, `TOOL_EXECUTION_START/COMPLETE`, `SESSION_IDLE`, `SESSION_USAGE_INFO`, `SUBAGENT_STARTED/COMPLETED`, context compaction, and more.
   - **[context.py](src/core/context.py)**: `SessionContext` singleton — holds shared state (working directory, temp files, tracked files).
-  - **[usage.py](src/core/usage.py)**: Per-model token/cost tracking, quota snapshots, session duration.
+  - **[usage.py](src/core/usage.py)**: Per-model token and AI-credit tracking, quota snapshots, session duration.
   - **[tools.py](src/core/tools.py)**: Read-only MCP tools (`list_files`, `read_file`) with strict path validation.
   - **[git.py](src/core/git.py)**: Branch detection and dirty-tree status for HUD footers.
   - **[filesystem.py](src/core/filesystem.py)**: Directory listing, project stats, noise-filtered file trees.

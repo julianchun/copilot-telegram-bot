@@ -18,3 +18,22 @@ def test_format_session_detail_uses_sdk_start_time():
 
     assert "Created: 05/18 11:00" in result
     assert "Updated: 05/18 12:30" in result
+
+
+def test_format_session_detail_uses_v1_metadata_names():
+    session = SimpleNamespace(
+        session_id="session-456",
+        summary="Existing work",
+        start_time="2026-05-18T11:00:00",
+        modified_time="2026-05-18T12:30:00",
+        context=SimpleNamespace(working_directory="/repo/app", branch="feature"),
+        selected_model="gpt-5",
+    )
+
+    result = format_session_detail(session)
+
+    assert "Session: session-456" in result
+    assert "Path: /repo/app" in result
+    assert "Model: gpt-5" in result
+    assert "Created: 05/18 11:00" in result
+    assert "Updated: 05/18 12:30" in result

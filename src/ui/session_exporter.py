@@ -18,7 +18,7 @@ def format_session_markdown(events: List[SessionEvent], metadata: Dict[str, Any]
     Format session events into copilot-cli markdown format.
     
     Args:
-        events: List of SessionEvent objects from session.get_messages()
+        events: List of SessionEvent objects from session.get_events()
         metadata: Dict with session_id, start_time, project_name, current_model
         
     Returns:

@@ -204,10 +204,9 @@ def get_model_menu(models_data: List[Dict[str, Any]], current_model: str | None 
     options = []
     for m in models_data:
         m_id = m.get("id", "unknown")
-        mult = m.get("multiplier", "1x")
         options.append(
             SelectionOption(
-                text=f"{m_id} ({mult})",
+                text=m_id,
                 callback_data=f"model:{m_id}",
                 selected=m_id == current_model,
             )
@@ -260,7 +259,7 @@ def _session_context(session: Any) -> Any:
 
 def _session_cwd(session: Any) -> str | None:
     context = _session_context(session)
-    return _session_attr(context, "cwd", default=None)
+    return _session_attr(context, "working_directory", "cwd", default=None)
 
 
 def _session_branch(session: Any) -> str | None:
@@ -278,7 +277,7 @@ def _session_model(session: Any) -> str:
 
 
 def _session_project(session: Any) -> str:
-    cwd = _session_cwd(session) or _session_attr(session, "cwd", default=None)
+    cwd = _session_cwd(session) or _session_attr(session, "working_directory", "cwd", default=None)
     return Path(cwd).name if cwd else "unknown project"
 
 
@@ -287,11 +286,11 @@ def _session_summary(session: Any) -> str:
 
 
 def _session_modified(session: Any) -> str:
-    return _compact_timestamp(_session_attr(session, "modifiedTime", "modified", default=None))
+    return _compact_timestamp(_session_attr(session, "modified_time", "modifiedTime", "modified", default=None))
 
 
 def _session_created(session: Any) -> str:
-    return _compact_timestamp(_session_attr(session, "startTime", "createdTime", "created", default=None))
+    return _compact_timestamp(_session_attr(session, "start_time", "startTime", "createdTime", "created", default=None))
 
 
 def _session_overview_line(number: int, session: Any) -> str:
@@ -307,7 +306,7 @@ def _session_overview_line(number: int, session: Any) -> str:
 def format_session_detail(session: Any) -> str:
     """Format a single session details card for Telegram."""
     session_id = _session_attr(session, "sessionId", "session_id", default=None) or "unknown"
-    cwd = _session_cwd(session) or _session_attr(session, "cwd", default=None) or "unknown path"
+    cwd = _session_cwd(session) or _session_attr(session, "working_directory", "cwd", default=None) or "unknown path"
     branch = _session_branch(session) or _session_attr(session, "branch", default=None) or "N/A"
     return (
         "🧷 Session Details\n"
@@ -337,7 +336,7 @@ def format_attached_session(
     prefix: str = "✅ Attached",
 ) -> str:
     session_id = _session_attr(session_info, "sessionId", "session_id", default=None) or fallback_session_id
-    cwd = _session_cwd(session_info) or _session_attr(session_info, "cwd", default=None) or fallback_cwd or "unknown path"
+    cwd = _session_cwd(session_info) or _session_attr(session_info, "working_directory", "cwd", default=None) or fallback_cwd or "unknown path"
     branch = _session_branch(session_info) or _session_attr(session_info, "branch", default=None) or "N/A"
     model = _session_model(session_info)
     if model == "model unknown" and fallback_model:
@@ -372,7 +371,7 @@ def get_sessions_menu(
 
     sorted_sessions = sorted(
         sessions,
-        key=lambda item: _session_attr(item, "modifiedTime", "modified", default="") or "",
+        key=lambda item: _session_attr(item, "modified_time", "modifiedTime", "modified", default="") or "",
         reverse=True,
     )
 

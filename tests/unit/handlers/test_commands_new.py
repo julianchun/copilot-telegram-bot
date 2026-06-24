@@ -115,7 +115,7 @@ class TestSessionAttachmentCommands:
         session = SimpleNamespace(
             sessionId="abc123456789",
             summary="Fix tests",
-            selectedModel="gpt-4.1",
+            selectedModel="gpt-5.4",
             modifiedTime="2026-05-18T12:00:00+00:00",
             context=SimpleNamespace(cwd="/repo/app", branch="main"),
         )
@@ -133,7 +133,7 @@ class TestSessionAttachmentCommands:
         assert "Resume Session" in text
         assert "Mode:" not in text
         assert "Fix tests" in text
-        assert "gpt-4.1" not in text
+        assert "gpt-5.4" not in text
         expected_time = datetime.fromisoformat("2026-05-18T12:00:00+00:00").astimezone().strftime("%m/%d %H:%M")
         assert expected_time in text
         assert "2026-05-18T12:00:00" not in text
@@ -445,7 +445,7 @@ class TestSessionAttachmentCallbacks:
                 startTime="2026-05-18T11:00:00",
                 modifiedTime="2026-05-18T12:00:00",
                 context=SimpleNamespace(cwd="/repo/app", branch="main"),
-                selectedModel="gpt-4.1",
+                selectedModel="gpt-5.4",
             )
         ])
 
@@ -476,8 +476,9 @@ class TestSessionAttachmentCallbacks:
 
 class TestPermissionBridgeAllowAll:
     async def test_allow_all_bypasses_permission(self):
-        """When allow_all_tools is True, _permission_bridge auto-approves everything."""
+        """When allow_all_tools is True, non-URL requests are approved once."""
         import asyncio
+        from copilot.rpc import PermissionDecisionApproveOnce
         from src.core.session import SessionMixin
 
         class FakeService(SessionMixin):
@@ -488,7 +489,7 @@ class TestPermissionBridgeAllowAll:
                 self.session_info = MagicMock()
                 self._is_running = True
                 self._usage_unsubscribe = None
-                self.current_model = "gpt-4.1"
+                self.current_model = "gpt-5.4"
                 self.user_selected_model = None
                 self.current_reasoning_effort = None
                 self.interaction_callback = None
@@ -505,10 +506,48 @@ class TestPermissionBridgeAllowAll:
                 self.allow_all_tools = True
 
         svc = FakeService()
-        result = await svc._permission_bridge(
-            {"toolName": "bash", "toolArgs": {"command": "rm -rf /"}}, MagicMock(),
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="shell", full_command_text="rm -rf /"),
+            MagicMock(),
         )
-        assert result == {"permissionDecision": "allow"}
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_allow_all_does_not_bypass_url_permission(self):
+        """URL permission requests still require Telegram approval."""
+        import asyncio
+        from copilot.rpc import PermissionDecisionUserNotAvailable
+        from src.core.session import SessionMixin
+
+        class FakeService(SessionMixin):
+            def __init__(self):
+                self.client = MagicMock()
+                self.session = MagicMock()
+                self.session_id = "test-123"
+                self.session_info = MagicMock()
+                self._is_running = True
+                self._usage_unsubscribe = None
+                self.current_model = "gpt-5.4"
+                self.user_selected_model = None
+                self.current_reasoning_effort = None
+                self.interaction_callback = None
+                self.session_expired = False
+                self.session_end_callback = None
+                self.usage_tracker = MagicMock()
+                self._tool_call_names = {}
+                self._chat_lock = asyncio.Lock()
+                self.last_session_usage = None
+                self.last_assistant_usage = None
+                self.current_mode = "general"
+                self.cleanup_temp_dir = MagicMock()
+                self._handle_event = MagicMock()
+                self.allow_all_tools = True
+
+        svc = FakeService()
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="url", url="https://example.com"),
+            MagicMock(),
+        )
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
 
 
 # ---------------------------------------------------------------------------

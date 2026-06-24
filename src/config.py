@@ -49,7 +49,7 @@ else:
 
 # ── Shared Constants ──────────────────────────────────────────────────────────
 
-DEFAULT_MODEL = "gpt-4.1"          # model used when user hasn't chosen one
+DEFAULT_MODEL = None               # None lets the Copilot SDK choose the account default
 INTERACTION_TIMEOUT = 300          # seconds — timeout for user interactions (permission, input)
 MAX_TRACKED_FILES = 200            # max files tracked in SessionContext before pruning
 TRACKED_FILES_PRUNE_SIZE = 100     # keep last N files when pruning

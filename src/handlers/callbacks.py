@@ -44,23 +44,29 @@ def _build_project_selected_message(context: ContextTypes.DEFAULT_TYPE, project_
 async def _switch_project(path: Path, message, context: ContextTypes.DEFAULT_TYPE, query=None):
     """Common project-switching logic used by proj:, proj_granted:, and create_project_name.
     
-    If `query` is provided (CallbackQuery), edits the original start message to remove the keyboard.
+    If `query` is provided (CallbackQuery), removes the original project picker.
     """
     await service.set_mode("interactive")
     await service.deselect_agent()
     await service.set_working_directory(str(path))
 
-    # Edit the start message to remove inline keyboard and show final status
+    cockpit = await service.get_cockpit_message()
+
     if query:
         try:
-            await _refresh_auth_info(context)
-            selected_msg = _build_project_selected_message(context, path.name, "Selected")
-            await query.edit_message_text(selected_msg)
+            await query.message.delete()
         except Exception as e:
-            logger.warning(f"⚠️ Failed to edit start message: {e}")
+            logger.warning(f"⚠️ Failed to delete project selection message: {e}")
+            try:
+                await _refresh_auth_info(context)
+                selected_msg = _build_project_selected_message(context, path.name, "Selected")
+                await query.edit_message_text(selected_msg)
+            except Exception as edit_err:
+                logger.warning(f"⚠️ Failed to edit project selection message: {edit_err}")
 
-    cockpit = await service.get_cockpit_message()
-    await message.reply_text(cockpit)
+        await context.bot.send_message(chat_id=query.message.chat_id, text=cockpit)
+    else:
+        await message.reply_text(cockpit)
 
 
 def _build_project_menu(context: ContextTypes.DEFAULT_TYPE, page: int = 0):
@@ -181,7 +187,8 @@ async def _handle_model_page_callback(query, context):
 
     page = int(query.data.split(":")[1])
     models = service._models_cache or await service.get_available_models()
-    text, keyboard = get_model_menu(models, current_model=service.current_model, page=page)
+    current_model = service.get_display_model() if hasattr(service, "get_display_model") else service.current_model
+    text, keyboard = get_model_menu(models, current_model=current_model, page=page)
     await query.edit_message_text(text, reply_markup=keyboard)
 
 
@@ -473,6 +480,46 @@ async def _handle_session_detail_callback(query, context):
     )
 
 
+def _plan_action_value(action):
+    if action is None:
+        return None
+    return getattr(action, "value", str(action))
+
+
+def _select_exit_plan_action(pending: dict | None):
+    from copilot.rpc import UIExitPlanModeAction
+
+    actions = [_plan_action_value(action) for action in (pending or {}).get("actions", [])]
+    recommended = _plan_action_value((pending or {}).get("recommended_action"))
+    selected = recommended or ("autopilot" if "autopilot" in actions else None)
+    if not selected and actions:
+        selected = actions[0]
+    selected = selected or "interactive"
+    try:
+        return UIExitPlanModeAction(selected)
+    except ValueError:
+        return UIExitPlanModeAction.INTERACTIVE
+
+
+async def _resolve_exit_plan_request(request_id: str, *, approved: bool, feedback: str | None = None):
+    from copilot.rpc import (
+        UIExitPlanModeResponse,
+        UIHandlePendingExitPlanModeRequest,
+    )
+
+    response = UIExitPlanModeResponse(
+        approved=approved,
+        selected_action=_select_exit_plan_action(service._pending_exit_plan_mode) if approved else None,
+        feedback=feedback,
+    )
+    return await service.session.rpc.ui.handle_pending_exit_plan_mode(
+        UIHandlePendingExitPlanModeRequest(
+            request_id=request_id,
+            response=response,
+        )
+    )
+
+
 async def _handle_plan_callback(query, context):
     """Handle plan: callback queries (exit_plan_mode approval)."""
     parts = query.data.split(":", 2)
@@ -491,28 +538,42 @@ async def _handle_plan_callback(query, context):
     except Exception as e:
         logger.error(f"❌ query.answer() failed for plan callback: {e}", exc_info=True)
 
-    if action == "approve":
-        service._pending_exit_plan_mode = None
+    if action in {"approve", "reject", "edit"}:
         if not service.session:
-            await query.edit_message_text("⚠️ No active session. Cannot switch mode.")
+            await query.edit_message_text("⚠️ No active session. Cannot resolve plan request.")
             return
 
-        success = await service.set_mode('interactive')
-        if success:
-            await query.edit_message_text("✅ Plan approved! Switched to interactive mode.")
+        try:
+            if action == "approve":
+                result = await _resolve_exit_plan_request(request_id, approved=True)
+                success_message = "✅ Plan approved."
+            elif action == "reject":
+                result = await _resolve_exit_plan_request(
+                    request_id,
+                    approved=False,
+                    feedback="Plan rejected by user.",
+                )
+                success_message = "❌ Plan rejected. Still in plan mode — send a message to revise."
+            else:
+                result = await _resolve_exit_plan_request(
+                    request_id,
+                    approved=False,
+                    feedback="User wants to revise the plan.",
+                )
+                success_message = (
+                    "📝 Plan edit requested.\n"
+                    "Send your feedback as a message and Copilot will revise the plan."
+                )
+        except Exception as e:
+            logger.error(f"❌ Failed to resolve exit plan request: {e}", exc_info=True)
+            await query.edit_message_text(f"⚠️ Failed to resolve plan request: {e}")
+            return
+
+        service._pending_exit_plan_mode = None
+        if getattr(result, "success", False):
+            await query.edit_message_text(success_message)
         else:
-            await query.edit_message_text("⚠️ Failed to approve plan: could not switch to interactive mode.")
-
-    elif action == "reject":
-        service._pending_exit_plan_mode = None
-        await query.edit_message_text("❌ Plan rejected. Still in plan mode — send a message to revise.")
-
-    elif action == "edit":
-        service._pending_exit_plan_mode = None
-        await query.edit_message_text(
-            "📝 Plan edit requested.\n"
-            "Send your feedback as a message and Copilot will revise the plan."
-        )
+            await query.edit_message_text("⚠️ Plan request expired or was already handled.")
 
     else:
         await query.edit_message_text(f"⚠️ Unknown plan action: {action}")
@@ -601,16 +662,23 @@ async def create_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
         start_chat_id = context.user_data.pop('start_chat_id', None)
         if start_msg_id and start_chat_id:
             try:
-                await _refresh_auth_info(context)
-                action = "Selected" if already_exists else "Created"
-                selected_msg = _build_project_selected_message(context, name, action)
-                await context.bot.edit_message_text(
+                await context.bot.delete_message(
                     chat_id=start_chat_id,
                     message_id=start_msg_id,
-                    text=selected_msg,
                 )
             except Exception as e:
-                logger.warning(f"⚠️ Failed to edit start message: {e}")
+                logger.warning(f"⚠️ Failed to delete start message: {e}")
+                try:
+                    await _refresh_auth_info(context)
+                    action = "Selected" if already_exists else "Created"
+                    selected_msg = _build_project_selected_message(context, name, action)
+                    await context.bot.edit_message_text(
+                        chat_id=start_chat_id,
+                        message_id=start_msg_id,
+                        text=selected_msg,
+                    )
+                except Exception as edit_err:
+                    logger.warning(f"⚠️ Failed to edit start message: {edit_err}")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error setting directory: {e}")
     return ConversationHandler.END

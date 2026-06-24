@@ -1,12 +1,102 @@
 """Unit tests for Mode API and Agent management methods in CopilotService."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.core.service import CopilotService
+from src.core.usage import SessionInfo
+
+
+def test_build_client_uses_v1_runtime_connection(tmp_path):
+    svc = object.__new__(CopilotService)
+    connection = object()
+
+    with (
+        patch("src.core.service.RuntimeConnection.for_stdio", return_value=connection) as for_stdio,
+        patch("src.core.service.CopilotClient") as client_cls,
+        patch("src.core.service.GITHUB_TOKEN", "gh-token"),
+    ):
+        result = svc._build_client(tmp_path)
+
+    for_stdio.assert_called_once_with()
+    client_cls.assert_called_once_with(
+        working_directory=str(tmp_path),
+        github_token="gh-token",
+        connection=connection,
+    )
+    assert result is client_cls.return_value
+
+
+def test_get_display_model_prefers_real_runtime_model():
+    svc = object.__new__(CopilotService)
+    svc.last_assistant_usage = None
+    svc.session_info = SessionInfo()
+    svc.current_model = None
+
+    assert svc.get_display_model() == "Auto"
+
+    svc.session_info.selected_model = "claude-sonnet-4.6"
+    assert svc.get_display_model() == "claude-sonnet-4.6"
+
+    svc.last_assistant_usage = SimpleNamespace(model="gpt-5.4")
+    assert svc.get_display_model() == "gpt-5.4"
+
+
+async def test_export_session_to_file_uses_get_events(tmp_path):
+    svc = object.__new__(CopilotService)
+    svc.session = MagicMock()
+    svc.session.get_events = AsyncMock(return_value=[SimpleNamespace(type="event")])
+    svc.session.get_messages = AsyncMock()
+    svc.session_id = "session-123"
+    svc.project_name = "project"
+    svc.current_model = "gpt-5"
+
+    with (
+        patch("src.core.service.ctx.root_path", tmp_path),
+        patch("src.core.service.ctx.session_start_time", datetime(2026, 5, 3, 0, 0, 0)),
+        patch("src.ui.session_exporter.format_session_markdown", return_value="# export\n") as formatter,
+    ):
+        result = await svc.export_session_to_file()
+
+    svc.session.get_events.assert_awaited_once_with()
+    svc.session.get_messages.assert_not_awaited()
+    formatter.assert_called_once()
+    assert result == str(tmp_path / "copilot-telegram-bot-session-123.md")
+    assert (tmp_path / "copilot-telegram-bot-session-123.md").read_text() == "# export\n"
+
+
+async def test_get_usage_report_includes_account_quota():
+    svc = object.__new__(CopilotService)
+    metrics = SimpleNamespace(total_nano_aiu=1_000_000_000)
+    quota = SimpleNamespace(quota_snapshots={})
+    svc.get_sdk_usage_metrics = AsyncMock(return_value=metrics)
+    svc.get_account_quota = AsyncMock(return_value=quota)
+    svc.usage_tracker = MagicMock()
+    svc.usage_tracker.get_usage_summary = AsyncMock(return_value="summary")
+
+    result = await svc.get_usage_report()
+
+    assert result == "summary"
+    svc.get_sdk_usage_metrics.assert_awaited_once_with()
+    svc.get_account_quota.assert_awaited_once_with()
+    svc.usage_tracker.get_usage_summary.assert_awaited_once_with(metrics, quota)
+
+
+async def test_get_account_quota_calls_server_rpc():
+    svc = object.__new__(CopilotService)
+    svc._is_running = True
+    quota = SimpleNamespace(quota_snapshots={})
+    svc.client = MagicMock()
+    svc.client.rpc.account.get_quota = AsyncMock(return_value=quota)
+
+    result = await svc.get_account_quota()
+
+    assert result is quota
+    svc.client.rpc.account.get_quota.assert_awaited_once()
 
 
 @pytest.fixture

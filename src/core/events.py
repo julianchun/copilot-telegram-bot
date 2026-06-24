@@ -7,6 +7,7 @@ import logging
 from copilot.generated.session_events import SessionEventType
 
 from src.core.context import ctx
+from src.core.session_metadata import metadata_value
 from src.ui.formatters import format_tool_start, format_tool_complete, truncate_text
 
 logger = logging.getLogger(__name__)
@@ -67,17 +68,20 @@ class EventHandlerMixin:
         """Capture session context from the session.start event (via on_event)."""
         try:
             data = event.data
-            self.session_info.session_id = getattr(data, 'session_id', None)
-            self.session_info.selected_model = getattr(data, 'selected_model', None)
-            self.session_info.copilot_version = getattr(data, 'copilot_version', None)
-            self.session_info.producer = getattr(data, 'producer', None)
+            self.session_info.session_id = metadata_value(data, "session_id", "sessionId")
+            self.session_info.selected_model = metadata_value(data, "selected_model", "selectedModel")
+            self.session_info.copilot_version = metadata_value(data, "copilot_version", "copilotVersion")
+            self.session_info.producer = metadata_value(data, "producer")
 
-            context = getattr(data, 'context', None)
+            context = metadata_value(data, "context")
             if context and not isinstance(context, str):
-                self.session_info.cwd = getattr(context, 'cwd', None)
-                self.session_info.branch = getattr(context, 'branch', None)
-                self.session_info.git_root = getattr(context, 'git_root', None)
-                self.session_info.repository = getattr(context, 'repository', None)
+                self.session_info.cwd = metadata_value(context, "working_directory", "cwd")
+                self.session_info.branch = metadata_value(context, "branch")
+                self.session_info.git_root = (
+                    metadata_value(context, "git_root", "gitRoot")
+                    or metadata_value(data, "git_root", "gitRoot")
+                )
+                self.session_info.repository = metadata_value(context, "repository")
                 logger.info(
                     f"📍 Session context from session.start — "
                     f"CWD: {self.session_info.cwd}, Branch: {self.session_info.branch}"
@@ -239,8 +243,8 @@ class EventHandlerMixin:
     def _on_session_mode_changed(self, event):
         new_mode = getattr(event.data, 'new_mode', None)
         if new_mode:
-            self.current_mode = new_mode
-            logger.info(f"Session mode changed to: {new_mode}")
+            self.current_mode = getattr(new_mode, "value", new_mode)
+            logger.info(f"Session mode changed to: {self.current_mode}")
         else:
             logger.info("Session mode changed event received without new_mode field")
 
@@ -309,14 +313,18 @@ class EventHandlerMixin:
                 'request_id': request_id,
                 'plan_content': plan_content,
                 'summary': summary,
+                'actions': actions,
+                'recommended_action': recommended,
             }
 
             keyboard = get_exit_plan_mode_keyboard(request_id)
             header = "📋 Plan ready for review"
             if recommended:
-                header += f" (recommended: {recommended})"
+                recommended_display = getattr(recommended, "value", str(recommended))
+                header += f" (recommended: {recommended_display})"
             if actions:
-                header += f"\nActions: {', '.join(actions)}"
+                action_labels = [getattr(action, "value", str(action)) for action in actions]
+                header += f"\nActions: {', '.join(action_labels)}"
 
             if plan_content and len(plan_content) <= PLAN_MSG_INLINE_LIMIT:
                 msg_text = f"{header}\n\nSummary: {summary}\n\n{plan_content}"

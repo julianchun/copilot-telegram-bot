@@ -18,25 +18,20 @@ from src.config import (
     WORKSPACE_PATH,
 )
 from src.core.context import ctx
-from src.core.session_metadata import metadata_value
+from src.core.session_metadata import metadata_timestamp, metadata_value
 from src.core.usage import SessionUsageTracker, SessionInfo
 
-from copilot.session import PermissionHandler
+from copilot.rpc import (
+    PermissionDecisionApproveOnce,
+    PermissionDecisionReject,
+    PermissionDecisionUserNotAvailable,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ── Tool allowlist (auto-approved without asking user) ────────────────
-
-_TOOL_ALLOWLIST = frozenset({
-    "report_intent", "task", "view", "glob", "grep",
-    "fetch_copilot_cli_documentation", "ask_user", "update_todo", "edit",
-    "list_files", "sql"
-})
-
-
 class _PermissionRequest:
-    """Lightweight container for tool permission request data."""
+    """Lightweight container for Telegram permission request display data."""
     __slots__ = ("tool_name", "arguments")
 
     def __init__(self, name: str, args: dict):
@@ -79,21 +74,43 @@ class SessionMixin:
 
         return list(dict.fromkeys(skill_dirs))
 
+    def _normalize_mcp_servers(self, servers: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Return v1-public MCP configs without mutating the loaded config."""
+        if not servers:
+            return None
+
+        normalized: dict[str, Any] = {}
+        for name, config in servers.items():
+            if not isinstance(config, dict):
+                normalized[name] = config
+                continue
+
+            server_type = config.get("type")
+            is_http = server_type in {"http", "sse"} or "url" in config
+            if is_http:
+                normalized[name] = dict(config)
+                continue
+
+            server_config = dict(config)
+            if "cwd" in server_config:
+                server_config.setdefault("working_directory", server_config["cwd"])
+                del server_config["cwd"]
+            normalized[name] = server_config
+        return normalized
+
     def _build_session_options(self, root_path: Path | str | None = None) -> dict[str, Any]:
         """Return shared SDK options for creating or resuming a session."""
         from src.core.tools import list_files, read_file
 
-        model = self.user_selected_model or self.current_model or DEFAULT_MODEL
+        model = self.user_selected_model or DEFAULT_MODEL
         active_root = root_path or ctx.root_path
         skill_dirs = self._build_cli_compatible_skill_directories(active_root)
-        return {
-            "on_permission_request": PermissionHandler.approve_all,
-            "model": model,
+        options = {
+            "on_permission_request": self._permission_request_bridge,
             "client_name": "copilot-telegram-bot",
             "streaming": False,
             "tools": [list_files, read_file],
             "hooks": {
-                "on_pre_tool_use": self._permission_bridge,
                 "on_session_end": self._on_session_end,
             },
             "on_user_input_request": self._user_input_bridge,
@@ -115,10 +132,13 @@ class SessionMixin:
             "reasoning_effort": self.current_reasoning_effort,
             "on_event": self._handle_event,
             "enable_config_discovery": True,
-            "mcp_servers": MCP_SERVERS,
+            "mcp_servers": self._normalize_mcp_servers(MCP_SERVERS),
             "skill_directories": skill_dirs,
             "working_directory": str(active_root),
         }
+        if model:
+            options["model"] = model
+        return options
 
     def _allowed_workspace_roots(self) -> list[Path]:
         """Return configured roots that resumed sessions may attach to."""
@@ -130,7 +150,8 @@ class SessionMixin:
     def _workspace_path_from_metadata(self, metadata: Any | None, *, require_cwd: bool = False) -> Path | None:
         """Return the session cwd as a validated local workspace root."""
         context = metadata_value(metadata, "context") if metadata else None
-        target_cwd = metadata_value(context, "cwd") if context else None
+        target_cwd = metadata_value(context, "working_directory", "cwd") if context else None
+        target_cwd = target_cwd or metadata_value(metadata, "working_directory", "cwd")
         if not target_cwd:
             if require_cwd:
                 raise RuntimeError("session metadata is missing cwd; cannot safely attach")
@@ -174,17 +195,27 @@ class SessionMixin:
             return
         self.session_info.session_id = metadata_value(metadata, "sessionId", "session_id") or self.session_info.session_id
         self.session_info.name = metadata_value(metadata, "summary", "name")
-        self.session_info.created = metadata_value(metadata, "startTime", "created")
-        self.session_info.modified = metadata_value(metadata, "modifiedTime", "modified")
+        self.session_info.created = metadata_timestamp(
+            metadata_value(metadata, "start_time", "startTime", "createdTime", "created")
+        )
+        self.session_info.modified = metadata_timestamp(
+            metadata_value(metadata, "modified_time", "modifiedTime", "modified")
+        )
         context = metadata_value(metadata, "context")
+        git_root = metadata_value(metadata, "git_root", "gitRoot")
         if context:
             workspace_path = self._workspace_path_from_metadata(metadata)
             if workspace_path:
                 ctx.set_root(workspace_path)
-            self.session_info.cwd = metadata_value(context, "cwd") or self.session_info.cwd
+            self.session_info.cwd = metadata_value(context, "working_directory", "cwd") or self.session_info.cwd
             self.session_info.branch = metadata_value(context, "branch") or self.session_info.branch
-            self.session_info.git_root = metadata_value(context, "gitRoot", "git_root") or self.session_info.git_root
+            self.session_info.git_root = metadata_value(context, "git_root", "gitRoot") or git_root or self.session_info.git_root
             self.session_info.repository = metadata_value(context, "repository") or self.session_info.repository
+        else:
+            self.session_info.cwd = metadata_value(metadata, "working_directory", "cwd") or self.session_info.cwd
+            self.session_info.branch = metadata_value(metadata, "branch") or self.session_info.branch
+            self.session_info.git_root = git_root or self.session_info.git_root
+            self.session_info.repository = metadata_value(metadata, "repository") or self.session_info.repository
 
     def _activate_session(self, session, *, metadata: Any | None = None, workspace_path: Path | None = None) -> None:
         """Reset local Telegram state for a newly active SDK session handle."""
@@ -356,9 +387,7 @@ class SessionMixin:
         try:
             meta = await self.client.get_session_metadata(self.session_info.session_id)
             if meta:
-                self.session_info.name = getattr(meta, 'summary', None)
-                self.session_info.created = getattr(meta, 'startTime', None)
-                self.session_info.modified = getattr(meta, 'modifiedTime', None)
+                self._apply_session_metadata(meta)
                 logger.info(f"📊 Session metadata fetched - Name: {self.session_info.name}, Created: {self.session_info.created}")
             else:
                 logger.warning(f"Session {self.session_info.session_id} not found via get_session_metadata()")
@@ -405,11 +434,14 @@ class SessionMixin:
 
     async def _create_session(self):
         """Create and configure a new Copilot SDK session."""
-        model = self.user_selected_model or self.current_model or DEFAULT_MODEL
-        logger.info(f"Creating new session with model: {model}")
+        model = self.user_selected_model or DEFAULT_MODEL
+        if not model:
+            self.current_model = None
+        logger.info(f"Creating new session with model: {model or 'Auto'}")
         session = await self.client.create_session(**self._build_session_options())
-        self.current_model = model
-        logger.info(f"✅ Session created with model: {model}")
+        if model:
+            self.current_model = model
+        logger.info(f"✅ Session created with model: {model or 'Auto'}")
 
         self._activate_session(session)
 
@@ -494,45 +526,129 @@ class SessionMixin:
         finally:
             self._chat_lock.release()
 
-    async def _permission_bridge(self, input_data, invocation):
-        """Bridge between SDK on_pre_tool_use and Telegram permission UI."""
-        tool_name = input_data.get('toolName', 'unknown')
-        tool_args = input_data.get('toolArgs', {})
+    def _permission_kind(self, request: Any) -> str:
+        return str(metadata_value(request, "kind", default="unknown"))
 
-        # /allowall toggle: auto-approve everything
-        if self.allow_all_tools:
-            logger.info(f"✅ Auto-approved (allow_all mode): {tool_name}")
-            return {"permissionDecision": "allow"}
+    def _permission_path_is_allowed(self, path_value: Any) -> bool:
+        if not path_value:
+            return False
+        try:
+            target = Path(str(path_value)).expanduser()
+            if not target.is_absolute():
+                target = ctx.root_path / target
+            target = target.resolve()
+        except Exception:
+            return False
 
-        # Auto-approve tools in allowlist
-        if tool_name in _TOOL_ALLOWLIST:
-            logger.info(f"✅ Auto-approved allowlisted tool: {tool_name}")
-            return {"permissionDecision": "allow"}
+        for allowed_root in self._allowed_workspace_roots():
+            try:
+                target.relative_to(allowed_root)
+                return True
+            except ValueError:
+                continue
+        return False
 
-        # Ask user for permission via interaction callback
+    def _should_auto_approve_permission(self, request: Any) -> bool:
+        kind = self._permission_kind(request)
+        if kind != "read":
+            return False
+        return self._permission_path_is_allowed(metadata_value(request, "path"))
+
+    def _describe_permission_request(self, request: Any) -> _PermissionRequest:
+        """Build a Telegram-facing summary for a v1 permission request."""
+        kind = self._permission_kind(request)
+        if kind == "read":
+            return _PermissionRequest("read", {
+                "path": metadata_value(request, "path"),
+                "intention": metadata_value(request, "intention"),
+            })
+        if kind == "url":
+            return _PermissionRequest("url", {
+                "url": metadata_value(request, "url"),
+                "intention": metadata_value(request, "intention"),
+            })
+        if kind == "shell":
+            commands = metadata_value(request, "commands", default=[]) or []
+            return _PermissionRequest("shell", {
+                "command": metadata_value(request, "full_command_text", "fullCommandText"),
+                "commands": [
+                    metadata_value(command, "identifier", default=str(command))
+                    for command in commands
+                ],
+                "warning": metadata_value(request, "warning"),
+            })
+        if kind == "write":
+            return _PermissionRequest("write", {
+                "file": metadata_value(request, "file_name", "fileName"),
+                "intention": metadata_value(request, "intention"),
+                "diff": metadata_value(request, "diff"),
+            })
+        if kind == "mcp":
+            server = metadata_value(request, "server_name", "serverName")
+            tool = metadata_value(request, "tool_name", "toolName")
+            return _PermissionRequest(f"mcp:{server}/{tool}", {
+                "server": server,
+                "tool": tool,
+                "read_only": metadata_value(request, "read_only", "readOnly"),
+                "args": metadata_value(request, "args"),
+            })
+        if kind == "custom-tool":
+            tool_name = metadata_value(request, "tool_name", "toolName", default="custom-tool")
+            return _PermissionRequest(str(tool_name), {
+                "description": metadata_value(request, "tool_description", "toolDescription"),
+                "args": metadata_value(request, "args"),
+            })
+        if kind == "hook":
+            tool_name = metadata_value(request, "tool_name", "toolName", default="hook")
+            return _PermissionRequest(f"hook:{tool_name}", {
+                "message": metadata_value(request, "hook_message", "hookMessage"),
+                "args": metadata_value(request, "tool_args", "toolArgs"),
+            })
+        if kind == "memory":
+            return _PermissionRequest("memory", {
+                "action": metadata_value(request, "action"),
+                "fact": metadata_value(request, "fact"),
+                "reason": metadata_value(request, "reason"),
+            })
+        return _PermissionRequest(kind, {})
+
+    async def _permission_request_bridge(self, request, invocation):
+        """Bridge v1 permission requests to Telegram inline approval."""
+        kind = self._permission_kind(request)
+
+        if self.allow_all_tools and kind != "url":
+            logger.info(f"✅ Auto-approved once (/allowall): {kind}")
+            return PermissionDecisionApproveOnce()
+
+        if self._should_auto_approve_permission(request):
+            logger.info(f"✅ Auto-approved bounded read request: {metadata_value(request, 'path')}")
+            return PermissionDecisionApproveOnce()
+
         if not self.interaction_callback:
-            logger.warning(f"🟡 No interaction_callback, auto-approving: {tool_name}")
-            return {"permissionDecision": "allow"}
+            logger.warning(f"🟡 No interaction_callback for permission request: {kind}")
+            return PermissionDecisionUserNotAvailable()
 
         try:
-            logger.info(f"🔔 Requesting user permission for tool: {tool_name}")
-            request = _PermissionRequest(tool_name, tool_args)
-
+            display_request = self._describe_permission_request(request)
+            logger.info(f"🔔 Requesting user permission: {display_request.tool_name}")
             result = await asyncio.wait_for(
-                self.interaction_callback("permission", request),
+                self.interaction_callback("permission", display_request),
                 timeout=PERMISSION_TIMEOUT,
             )
-
-            decision = "allow" if result else "deny"
-            logger.info(f"{'✅' if decision == 'allow' else '❌'} User {decision}ed tool: {tool_name}")
-            return {"permissionDecision": decision}
-
+            if result is True:
+                logger.info(f"✅ User approved permission: {display_request.tool_name}")
+                return PermissionDecisionApproveOnce()
+            if result is False:
+                logger.info(f"❌ User denied permission: {display_request.tool_name}")
+                return PermissionDecisionReject(feedback="Denied by user.")
+            logger.warning(f"🟡 Permission UI unavailable: {display_request.tool_name}")
+            return PermissionDecisionUserNotAvailable()
         except asyncio.TimeoutError:
-            logger.warning(f"⏱️ Permission request timeout, denying: {tool_name}")
-            return {"permissionDecision": "deny"}
+            logger.warning(f"⏱️ Permission request timeout: {kind}")
+            return PermissionDecisionUserNotAvailable()
         except Exception as e:
             logger.error(f"❌ Permission request failed: {e}", exc_info=True)
-            return {"permissionDecision": "deny"}
+            return PermissionDecisionUserNotAvailable()
 
     async def _refresh_git_info(self):
         """Re-query git branch/status and update session_info (3s timeout)."""

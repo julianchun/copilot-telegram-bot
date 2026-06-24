@@ -1,13 +1,19 @@
 """Unit tests for src.core.session module."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from copilot.rpc import (
+    PermissionDecisionApproveOnce,
+    PermissionDecisionReject,
+    PermissionDecisionUserNotAvailable,
+)
 
 from src.core.context import ctx
-from src.core.session import SessionMixin, _TOOL_ALLOWLIST
+from src.core.session import SessionMixin
 
 
 class FakeService(SessionMixin):
@@ -20,7 +26,7 @@ class FakeService(SessionMixin):
         self.session_info = MagicMock()
         self._is_running = True
         self._usage_unsubscribe = None
-        self.current_model = "gpt-4.1"
+        self.current_model = "gpt-5.4"
         self.user_selected_model = None
         self.current_reasoning_effort = None
         self.interaction_callback = None
@@ -40,18 +46,6 @@ class FakeService(SessionMixin):
         self.allow_all_tools = False
 
 
-# ── _TOOL_ALLOWLIST ───────────────────────────────────────────────────
-
-class TestToolAllowlist:
-    def test_tool_allowlist_contains_expected(self):
-        expected = {
-            "report_intent", "task", "view", "glob", "grep",
-            "fetch_copilot_cli_documentation", "ask_user", "update_todo", "edit",
-            "list_files", "sql",
-        }
-        assert _TOOL_ALLOWLIST == expected
-
-
 # ── lifecycle disconnect ─────────────────────────────────────────────
 
 class TestLifecycleDisconnect:
@@ -69,42 +63,107 @@ class TestLifecycleDisconnect:
         svc.client.stop.assert_awaited_once()
 
 
-# ── _permission_bridge ────────────────────────────────────────────────
+# ── _permission_request_bridge ────────────────────────────────────────
 
-class TestPermissionBridge:
-    async def test_permission_bridge_auto_approves_allowlisted(self):
+class TestPermissionRequestBridge:
+    async def test_read_inside_workspace_auto_approves_once(self, tmp_path):
         svc = FakeService()
-        result = await svc._permission_bridge(
-            {"toolName": "view", "toolArgs": {}}, MagicMock(),
-        )
-        assert result == {"permissionDecision": "allow"}
+        target = tmp_path / "README.md"
+        target.write_text("# test")
 
-    async def test_permission_bridge_asks_for_non_allowlisted(self):
+        with (
+            patch("src.core.session.ctx.root_path", tmp_path),
+            patch("src.core.session.WORKSPACE_PATH", tmp_path),
+            patch("src.core.session.GRANTED_PROJECT_PATHS", []),
+        ):
+            result = await svc._permission_request_bridge(
+                SimpleNamespace(kind="read", path=str(target), intention="inspect"),
+                MagicMock(),
+            )
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_read_outside_workspace_without_callback_is_unavailable(self, tmp_path):
+        svc = FakeService()
+        outside = tmp_path.parent / "outside.txt"
+
+        with (
+            patch("src.core.session.WORKSPACE_PATH", tmp_path),
+            patch("src.core.session.GRANTED_PROJECT_PATHS", []),
+        ):
+            result = await svc._permission_request_bridge(
+                SimpleNamespace(kind="read", path=str(outside), intention="inspect"),
+                MagicMock(),
+            )
+
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
+
+    async def test_shell_asks_telegram_and_user_allows(self):
         svc = FakeService()
         svc.interaction_callback = AsyncMock(return_value=True)
-        result = await svc._permission_bridge(
-            {"toolName": "bash", "toolArgs": {"command": "ls"}}, MagicMock(),
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="shell", full_command_text="ls", commands=[]),
+            MagicMock(),
         )
-        assert result == {"permissionDecision": "allow"}
+        assert isinstance(result, PermissionDecisionApproveOnce)
         svc.interaction_callback.assert_awaited_once()
+        assert svc.interaction_callback.await_args.args[0] == "permission"
+        assert svc.interaction_callback.await_args.args[1].tool_name == "shell"
 
-    async def test_permission_bridge_user_denies(self):
+    async def test_write_user_denies(self):
         svc = FakeService()
         svc.interaction_callback = AsyncMock(return_value=False)
-        result = await svc._permission_bridge(
-            {"toolName": "bash", "toolArgs": {}}, MagicMock(),
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="write", file_name="app.py", intention="edit"),
+            MagicMock(),
         )
-        assert result == {"permissionDecision": "deny"}
+        assert isinstance(result, PermissionDecisionReject)
+        assert result.feedback == "Denied by user."
 
-    async def test_permission_bridge_no_callback_auto_approves(self):
+    async def test_mcp_request_asks_even_when_read_only(self):
         svc = FakeService()
-        svc.interaction_callback = None
-        result = await svc._permission_bridge(
-            {"toolName": "bash", "toolArgs": {}}, MagicMock(),
+        svc.interaction_callback = AsyncMock(return_value=True)
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(
+                kind="mcp",
+                server_name="local",
+                tool_name="lookup",
+                read_only=True,
+                args={"q": "x"},
+            ),
+            MagicMock(),
         )
-        assert result == {"permissionDecision": "allow"}
+        assert isinstance(result, PermissionDecisionApproveOnce)
+        display_request = svc.interaction_callback.await_args.args[1]
+        assert display_request.tool_name == "mcp:local/lookup"
 
-    async def test_permission_bridge_timeout_denies(self):
+    async def test_no_callback_returns_user_not_available(self):
+        svc = FakeService()
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="shell", full_command_text="ls"),
+            MagicMock(),
+        )
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
+
+    async def test_callback_returns_none_as_user_not_available(self):
+        svc = FakeService()
+        svc.interaction_callback = AsyncMock(return_value=None)
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="url", url="https://example.com"),
+            MagicMock(),
+        )
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
+
+    async def test_callback_exception_returns_user_not_available(self):
+        svc = FakeService()
+        svc.interaction_callback = AsyncMock(side_effect=RuntimeError("send failed"))
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="write", file_name="app.py"),
+            MagicMock(),
+        )
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
+
+    async def test_timeout_returns_user_not_available(self):
         async def _hang(*a, **kw):
             await asyncio.sleep(999)
 
@@ -112,10 +171,81 @@ class TestPermissionBridge:
         svc.interaction_callback = _hang
 
         with patch("src.core.session.PERMISSION_TIMEOUT", 0.01):
-            result = await svc._permission_bridge(
-                {"toolName": "bash", "toolArgs": {}}, MagicMock(),
+            result = await svc._permission_request_bridge(
+                SimpleNamespace(kind="shell", full_command_text="ls"),
+                MagicMock(),
             )
-        assert result == {"permissionDecision": "deny"}
+        assert isinstance(result, PermissionDecisionUserNotAvailable)
+
+    async def test_allowall_auto_approves_non_url_only(self):
+        svc = FakeService()
+        svc.allow_all_tools = True
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="shell", full_command_text="ls"),
+            MagicMock(),
+        )
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_allowall_still_requires_url_permission(self):
+        svc = FakeService()
+        svc.allow_all_tools = True
+        svc.interaction_callback = AsyncMock(return_value=True)
+
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind="url", url="https://example.com"),
+            MagicMock(),
+        )
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+        svc.interaction_callback.assert_awaited_once()
+
+
+# ── MCP config normalization ─────────────────────────────────────────
+
+class TestMcpConfigNormalization:
+    def test_maps_stdio_cwd_to_working_directory(self):
+        svc = FakeService()
+        source = {
+            "local": {
+                "type": "stdio",
+                "command": "node",
+                "cwd": "/repo",
+            },
+        }
+
+        result = svc._normalize_mcp_servers(source)
+
+        assert result == {
+            "local": {
+                "type": "stdio",
+                "command": "node",
+                "working_directory": "/repo",
+            },
+        }
+        assert "cwd" in source["local"]
+
+    def test_existing_working_directory_takes_precedence(self):
+        svc = FakeService()
+        result = svc._normalize_mcp_servers({
+            "local": {
+                "command": "node",
+                "cwd": "/legacy",
+                "working_directory": "/current",
+            },
+        })
+
+        assert result["local"]["working_directory"] == "/current"
+        assert "cwd" not in result["local"]
+
+    def test_http_and_sse_configs_are_left_unchanged(self):
+        svc = FakeService()
+        result = svc._normalize_mcp_servers({
+            "http": {"type": "http", "url": "https://example.com/mcp", "cwd": "/ignored"},
+            "sse": {"type": "sse", "url": "https://example.com/sse"},
+        })
+
+        assert result["http"] == {"type": "http", "url": "https://example.com/mcp", "cwd": "/ignored"}
+        assert result["sse"] == {"type": "sse", "url": "https://example.com/sse"}
 
 
 # ── _user_input_bridge ────────────────────────────────────────────────
@@ -215,15 +345,52 @@ class TestOnSessionEnd:
 # ── populate_session_metadata ───────────────────────────────────────────
 
 class TestPopulateSessionMetadata:
-    async def test_populate_session_metadata_uses_direct_lookup(self):
+    async def test_populate_session_metadata_normalizes_v1_fields(self, tmp_path):
         svc = FakeService()
         svc.session_info.session_id = "session-123"
-        meta = MagicMock(summary="Test Session", startTime="2026-05-03T00:00:00", modifiedTime="2026-05-03T00:01:00")
+        project = tmp_path / "project"
+        project.mkdir()
+        meta = SimpleNamespace(
+            session_id="session-123",
+            summary="Test Session",
+            start_time=datetime(2026, 5, 3, 0, 0, 0),
+            modified_time=datetime(2026, 5, 3, 0, 1, 0),
+            context=SimpleNamespace(
+                working_directory=str(project),
+                branch="feature",
+            ),
+            git_root=str(project),
+        )
+        svc.client.get_session_metadata = AsyncMock(return_value=meta)
+
+        with (
+            patch("src.core.session.WORKSPACE_PATH", tmp_path),
+            patch("src.core.session.GRANTED_PROJECT_PATHS", []),
+        ):
+            await svc.populate_session_metadata()
+
+        svc.client.get_session_metadata.assert_awaited_once_with("session-123")
+        assert svc.session_info.session_id == "session-123"
+        assert svc.session_info.name == "Test Session"
+        assert svc.session_info.created == "2026-05-03T00:00:00"
+        assert svc.session_info.modified == "2026-05-03T00:01:00"
+        assert svc.session_info.cwd == str(project)
+        assert svc.session_info.branch == "feature"
+        assert svc.session_info.git_root == str(project)
+
+    async def test_populate_session_metadata_accepts_legacy_camel_case(self):
+        svc = FakeService()
+        svc.session_info.session_id = "session-123"
+        meta = SimpleNamespace(
+            sessionId="session-123",
+            summary="Test Session",
+            startTime="2026-05-03T00:00:00",
+            modifiedTime="2026-05-03T00:01:00",
+        )
         svc.client.get_session_metadata = AsyncMock(return_value=meta)
 
         await svc.populate_session_metadata()
 
-        svc.client.get_session_metadata.assert_awaited_once_with("session-123")
         assert svc.session_info.name == "Test Session"
         assert svc.session_info.created == "2026-05-03T00:00:00"
         assert svc.session_info.modified == "2026-05-03T00:01:00"
@@ -232,6 +399,31 @@ class TestPopulateSessionMetadata:
 # ── _create_session ──────────────────────────────────────────────────
 
 class TestCreateSession:
+    async def test_create_session_uses_sdk_auto_model_by_default(self, tmp_path):
+        svc = FakeService()
+        svc.current_model = "claude-from-previous-session"
+        svc.user_selected_model = None
+        svc.client.create_session = AsyncMock(return_value=MagicMock())
+
+        with patch("src.core.session.ctx.root_path", str(tmp_path)):
+            await svc._create_session()
+
+        kwargs = svc.client.create_session.await_args.kwargs
+        assert "model" not in kwargs
+        assert svc.current_model is None
+
+    async def test_create_session_sends_user_selected_model(self, tmp_path):
+        svc = FakeService()
+        svc.user_selected_model = "claude-sonnet-4.6"
+        svc.client.create_session = AsyncMock(return_value=MagicMock())
+
+        with patch("src.core.session.ctx.root_path", str(tmp_path)):
+            await svc._create_session()
+
+        kwargs = svc.client.create_session.await_args.kwargs
+        assert kwargs["model"] == "claude-sonnet-4.6"
+        assert svc.current_model == "claude-sonnet-4.6"
+
     async def test_create_session_registers_cli_compatible_skill_roots(self, tmp_path):
         svc = FakeService()
         svc.client.create_session = AsyncMock(return_value=MagicMock())
@@ -261,6 +453,25 @@ class TestCreateSession:
 
         assert svc.client.create_session.await_args.kwargs["enable_config_discovery"] is True
 
+    async def test_create_session_uses_v1_permission_and_mcp_options(self, tmp_path):
+        svc = FakeService()
+        svc.client.create_session = AsyncMock(return_value=MagicMock())
+        mcp_servers = {
+            "local": {"command": "node", "cwd": str(tmp_path)},
+        }
+
+        with (
+            patch("src.core.session.ctx.root_path", str(tmp_path)),
+            patch("src.core.session.MCP_SERVERS", mcp_servers),
+        ):
+            await svc._create_session()
+
+        kwargs = svc.client.create_session.await_args.kwargs
+        assert kwargs["on_permission_request"] == svc._permission_request_bridge
+        assert kwargs["hooks"] == {"on_session_end": svc._on_session_end}
+        assert kwargs["mcp_servers"]["local"]["working_directory"] == str(tmp_path)
+        assert "cwd" not in kwargs["mcp_servers"]["local"]
+
 
 # ── attach_session ──────────────────────────────────────────────────
 
@@ -288,8 +499,8 @@ class TestAttachSession:
         target_dir = tmp_path / "target" / "project"
         target_dir.mkdir(parents=True)
         metadata = SimpleNamespace(
-            sessionId="test-123",
-            context=SimpleNamespace(cwd=str(target_dir), branch="feature"),
+            session_id="test-123",
+            context=SimpleNamespace(working_directory=str(target_dir), branch="feature"),
         )
         svc.client.get_session_metadata = AsyncMock(return_value=metadata)
         svc.client.resume_session = AsyncMock()
@@ -338,9 +549,9 @@ class TestAttachSession:
         new_session.on = MagicMock(return_value=lambda: None)
         svc.client.resume_session = AsyncMock(return_value=new_session)
         metadata = SimpleNamespace(
-            sessionId="session-456",
+            session_id="session-456",
             summary="Existing work",
-            context=SimpleNamespace(cwd=str(target_dir), branch="feature"),
+            context=SimpleNamespace(working_directory=str(target_dir), branch="feature"),
         )
         svc.client.get_session_metadata = AsyncMock(return_value=metadata)
 
@@ -356,7 +567,8 @@ class TestAttachSession:
         assert kwargs["continue_pending_work"] is True
         assert kwargs["on_event"] == svc._handle_event
         assert kwargs["on_user_input_request"] == svc._user_input_bridge
-        assert kwargs["hooks"]["on_pre_tool_use"] == svc._permission_bridge
+        assert kwargs["on_permission_request"] == svc._permission_request_bridge
+        assert "on_pre_tool_use" not in kwargs["hooks"]
         assert kwargs["working_directory"] == str(target_dir.resolve())
         assert "model" not in kwargs
         old_session.disconnect.assert_awaited_once()

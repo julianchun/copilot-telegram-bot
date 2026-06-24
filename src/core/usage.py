@@ -3,11 +3,13 @@ import time
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from copilot.generated.session_events import SessionEventType
 
 logger = logging.getLogger(__name__)
+
+NANO_AIU_PER_AI_CREDIT = 1_000_000_000
 
 
 @dataclass
@@ -17,8 +19,8 @@ class ModelUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
-    requests: int = 0
-    cost: float = 0  # Premium requests estimate
+    reasoning_tokens: int = 0
+    llm_calls: int = 0
     api_duration_ms: int = 0
 
 
@@ -27,23 +29,111 @@ class QuotaUsage:
     """Track quota usage percentages from SDK events."""
     chat_remaining_percentage: Optional[str] = None
     completion_remaining_percentage: Optional[str] = None
-    premium_remaining_percentage: Optional[str] = None
+    ai_credits_remaining_percentage: Optional[str] = None
+
+
+def nano_aiu_to_ai_credits(total_nano_aiu: float | int | None) -> Optional[float]:
+    """Convert SDK nano-AIU totals to AI credits."""
+    if total_nano_aiu is None:
+        return None
+    return float(total_nano_aiu) / NANO_AIU_PER_AI_CREDIT
+
+
+def format_ai_credits(value: float | int | None) -> str:
+    """Format AI credits compactly for Telegram messages."""
+    if value is None:
+        return "N/A"
+    credits = float(value)
+    if credits == 0:
+        return "0"
+    if abs(credits) < 0.001:
+        return f"{credits:.6f}".rstrip("0").rstrip(".")
+    if abs(credits) < 1:
+        return f"{credits:.4f}".rstrip("0").rstrip(".")
+    return f"{credits:.2f}".rstrip("0").rstrip(".")
+
+
+def _duration_to_ms(duration: Any) -> int:
+    """Normalize SDK duration values to milliseconds."""
+    if not duration:
+        return 0
+    total_seconds = getattr(duration, "total_seconds", None)
+    if callable(total_seconds):
+        return int(total_seconds() * 1000)
+    return int(duration or 0)
 
 
 def _parse_quota_percentage(quota_snapshot) -> str:
     """Parse quota snapshot to get remaining percentage or 'Unlimited'."""
     if not quota_snapshot:
         return "N/A"
-    
-    is_unlimited = getattr(quota_snapshot, "is_unlimited_entitlement", False)
+
+    is_unlimited = _get_snapshot_value(quota_snapshot, "is_unlimited_entitlement")
     if is_unlimited:
         return "Unlimited"
-    
-    remaining = getattr(quota_snapshot, "remaining_percentage", None)
+
+    remaining = _get_snapshot_value(quota_snapshot, "remaining_percentage")
     if remaining is not None:
         return f"{remaining:.1f}%"
-    
+
     return "N/A"
+
+
+def _field_name_candidates(name: str) -> list[str]:
+    """Return public, v1-private, and JSON-style aliases for an SDK field."""
+    raw = name[1:] if name.startswith("_") else name
+    parts = raw.split("_")
+    camel = parts[0] + "".join(part.capitalize() for part in parts[1:])
+    candidates = [name, raw, f"_{raw}", camel]
+    result = []
+    for candidate in candidates:
+        if candidate not in result:
+            result.append(candidate)
+    return result
+
+
+def _get_snapshot_value(snapshot: Any, *names: str) -> Any:
+    """Read a quota snapshot field from either SDK dataclass or dict shapes."""
+    for name in names:
+        for candidate in _field_name_candidates(name):
+            if isinstance(snapshot, dict) and candidate in snapshot:
+                return snapshot[candidate]
+            value = getattr(snapshot, candidate, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _get_quota_snapshot(account_quota: Any, key: str) -> Any:
+    if not account_quota:
+        return None
+    snapshots = (
+        _get_snapshot_value(account_quota, "quota_snapshots", "quotaSnapshots")
+        or account_quota
+    )
+    if isinstance(snapshots, dict):
+        return snapshots.get(key)
+    return getattr(snapshots, key, None)
+
+
+def format_ai_credits_remaining(account_quota: Any) -> Optional[str]:
+    """Format remaining AI-credit quota from account.getQuota result."""
+    snapshot = _get_quota_snapshot(account_quota, "premium_interactions")
+    if not snapshot:
+        return None
+
+    is_unlimited = _get_snapshot_value(snapshot, "is_unlimited_entitlement")
+    if is_unlimited:
+        return "Unlimited"
+
+    remaining = _get_snapshot_value(snapshot, "remaining_percentage")
+    used = _get_snapshot_value(snapshot, "used_requests")
+    entitlement = _get_snapshot_value(snapshot, "entitlement_requests")
+    if remaining is None or used is None or entitlement is None:
+        return None
+
+    remaining_text = f"{float(remaining):.1f}".rstrip("0").rstrip(".")
+    return f"{remaining_text}% ({int(used)}/{int(entitlement)} used)"
 
 
 @dataclass
@@ -98,7 +188,7 @@ class SessionUsageTracker:
     token_limit: int = 0
     messages_length: int = 0
     model_usage: Dict[str, ModelUsage] = field(default_factory=dict)
-    total_premium_requests: float = 0
+    reported_ai_credits: Optional[float] = None
     latest_quota: Optional[dict] = None  # Dict[str, QuotaSnapshot]
     quota_usage: QuotaUsage = field(default_factory=QuotaUsage)
     _selected_model: Optional[str] = None
@@ -130,12 +220,22 @@ class SessionUsageTracker:
             usage.output_tokens += int(event.data.output_tokens or 0)
             usage.cache_read_tokens += int(getattr(event.data, 'cache_read_tokens', 0) or 0)
             usage.cache_write_tokens += int(getattr(event.data, 'cache_write_tokens', 0) or 0)
-            usage.cost += float(getattr(event.data, 'cost', 0) or 0)
-            usage.requests += 1
-            usage.api_duration_ms += int(getattr(event.data, 'duration', 0) or 0)
+            usage.reasoning_tokens += int(getattr(event.data, 'reasoning_tokens', 0) or 0)
+            usage.llm_calls += 1
+            usage.api_duration_ms += _duration_to_ms(getattr(event.data, 'duration', None))
+
+            copilot_usage = getattr(event.data, '_copilot_usage', None)
+            total_nano_aiu = getattr(copilot_usage, 'total_nano_aiu', None) if copilot_usage else None
+            if isinstance(total_nano_aiu, (int, float)):
+                credits = nano_aiu_to_ai_credits(total_nano_aiu)
+                if credits is not None:
+                    self.reported_ai_credits = (self.reported_ai_credits or 0) + credits
 
             # Update quota snapshots and parse into QuotaUsage
-            snapshots = getattr(event.data, 'quota_snapshots', None)
+            snapshots = (
+                getattr(event.data, 'quota_snapshots', None)
+                or getattr(event.data, '_quota_snapshots', None)
+            )
             if snapshots:
                 self.latest_quota = snapshots
                 # Parse quota snapshots into structured QuotaUsage
@@ -146,10 +246,7 @@ class SessionUsageTracker:
                 
                 self.quota_usage.chat_remaining_percentage = _parse_quota_percentage(chat_snap)
                 self.quota_usage.completion_remaining_percentage = _parse_quota_percentage(completions_snap)
-                self.quota_usage.premium_remaining_percentage = _parse_quota_percentage(premium_snap)
-
-        elif etype == SessionEventType.SESSION_SHUTDOWN:
-            self.total_premium_requests = float(getattr(event.data, 'total_premium_requests', 0) or 0)
+                self.quota_usage.ai_credits_remaining_percentage = _parse_quota_percentage(premium_snap)
 
     # ------------------------------------------------------------------
     # Derived helpers
@@ -169,16 +266,16 @@ class SessionUsageTracker:
             return None
         parts = []
         for key, snap in self.latest_quota.items():
-            is_unlimited = getattr(snap, 'is_unlimited_entitlement', False)
+            is_unlimited = _get_snapshot_value(snap, "is_unlimited_entitlement")
             if is_unlimited:
                 parts.append(f"{key}: Unlimited")
             else:
-                pct = getattr(snap, 'remaining_percentage', None)
+                pct = _get_snapshot_value(snap, "remaining_percentage")
                 if pct is not None:
                     parts.append(f"{key}: {pct:.0f}% remaining")
                 else:
-                    ent = getattr(snap, 'entitlement_requests', 0)
-                    parts.append(f"{key}: {ent:.0f} remaining")
+                    ent = _get_snapshot_value(snap, "entitlement_requests")
+                    parts.append(f"{key}: {ent:.0f} remaining" if ent is not None else f"{key}: N/A")
         return "\n".join(parts) if parts else None
     
     def get_quota_summary(self) -> str:
@@ -186,7 +283,7 @@ class SessionUsageTracker:
         lines = [
             f"• Chat: {self.quota_usage.chat_remaining_percentage or 'N/A'}",
             f"• Completions: {self.quota_usage.completion_remaining_percentage or 'N/A'}",
-            f"• Premium Remaining: {self.quota_usage.premium_remaining_percentage or 'N/A'}",
+            f"• AI Credits: {self.quota_usage.ai_credits_remaining_percentage or 'N/A'}",
         ]
         return "\n".join(lines)
 
@@ -195,29 +292,36 @@ class SessionUsageTracker:
         if not self.latest_quota:
             return None
         for _key, snap in self.latest_quota.items():
-            if getattr(snap, 'is_unlimited_entitlement', False):
+            if _get_snapshot_value(snap, "is_unlimited_entitlement"):
                 return 100.0
-            pct = getattr(snap, 'remaining_percentage', None)
+            pct = _get_snapshot_value(snap, "remaining_percentage")
             if pct is not None:
                 return float(pct)
         return None
 
-    async def get_usage_summary(self) -> str:
+    async def get_usage_summary(self, sdk_metrics: Any = None, account_quota: Any = None) -> str:
         """Generate a CLI-style usage summary."""
         from src.core.git import get_diff_shortstat
+
+        if sdk_metrics is not None:
+            return await self._get_sdk_usage_summary(sdk_metrics, account_quota)
 
         total_api_ms = sum(u.api_duration_ms for u in self.model_usage.values())
         session_time = (time.time() - self.session_start_time) if self.session_start_time else 0
 
-        total_requests = sum(u.requests for u in self.model_usage.values())
+        total_llm_calls = sum(u.llm_calls for u in self.model_usage.values())
         diff_stat = await get_diff_shortstat()
 
         lines = [
-            f"• Total requests: {total_requests}",
+            f"• AI credits used: {format_ai_credits(self.reported_ai_credits)}",
+            f"• LLM calls: {total_llm_calls}",
             f"• API time spent: {total_api_ms / 1000:.1f}s",
             f"• Total session time: {self._format_duration(session_time)}",
             f"• Unstaged changes: {diff_stat}" if diff_stat else "• Unstaged changes: N/A",
         ]
+        remaining = format_ai_credits_remaining(account_quota)
+        if remaining:
+            lines.insert(1, f"• AI credits remaining: {remaining}")
 
         if self.current_tokens or self.token_limit:
             lines.append(f"• Context tokens: {self.current_tokens}/{self.token_limit}")
@@ -228,8 +332,73 @@ class SessionUsageTracker:
             lines.append("  (No interactions yet)")
         else:
             for model, usage in self.model_usage.items():
+                token_bits = [
+                    f"{usage.input_tokens} in",
+                    f"{usage.output_tokens} out",
+                    f"{usage.cache_read_tokens} cache read",
+                    f"{usage.cache_write_tokens} cache write",
+                ]
+                if usage.reasoning_tokens:
+                    token_bits.append(f"{usage.reasoning_tokens} reasoning")
                 lines.append(
-                    f"  {model}: {usage.requests} requests"
+                    f"  {model}: {usage.llm_calls} calls; {', '.join(token_bits)}"
+                )
+
+        return "\n".join(lines)
+
+    async def _get_sdk_usage_summary(self, metrics: Any, account_quota: Any = None) -> str:
+        """Generate usage summary from SDK session.usage.getMetrics result."""
+        from src.core.git import get_diff_shortstat
+
+        total_ai_credits = nano_aiu_to_ai_credits(getattr(metrics, "total_nano_aiu", None))
+        total_calls = int(getattr(metrics, "total_user_requests", 0) or 0)
+        total_api_ms = int(getattr(metrics, "total_api_duration_ms", 0) or 0)
+        diff_stat = await get_diff_shortstat()
+
+        lines = [
+            f"• AI credits used: {format_ai_credits(total_ai_credits)}",
+            f"• LLM calls: {total_calls}",
+            f"• API time spent: {total_api_ms / 1000:.1f}s",
+            f"• Unstaged changes: {diff_stat}" if diff_stat else "• Unstaged changes: N/A",
+        ]
+        remaining = format_ai_credits_remaining(account_quota)
+        if remaining:
+            lines.insert(1, f"• AI credits remaining: {remaining}")
+
+        if self.current_tokens or self.token_limit:
+            lines.append(f"• Context tokens: {self.current_tokens}/{self.token_limit}")
+
+        last_input = int(getattr(metrics, "last_call_input_tokens", 0) or 0)
+        last_output = int(getattr(metrics, "last_call_output_tokens", 0) or 0)
+        if last_input or last_output:
+            lines.append(f"• Last call: {last_input} input, {last_output} output tokens")
+
+        lines.append("• Breakdown by AI model:")
+        model_metrics = getattr(metrics, "model_metrics", {}) or {}
+        if not model_metrics:
+            lines.append("  (No interactions yet)")
+        else:
+            for model, model_metric in model_metrics.items():
+                usage = getattr(model_metric, "usage", None)
+                requests = getattr(model_metric, "requests", None)
+                calls = int(getattr(requests, "count", 0) or 0)
+                model_credits = nano_aiu_to_ai_credits(getattr(model_metric, "total_nano_aiu", None))
+                if usage is None:
+                    lines.append(f"  {model}: {calls} calls; {format_ai_credits(model_credits)} credits")
+                    continue
+
+                token_bits = [
+                    f"{int(getattr(usage, 'input_tokens', 0) or 0)} in",
+                    f"{int(getattr(usage, 'output_tokens', 0) or 0)} out",
+                    f"{int(getattr(usage, 'cache_read_tokens', 0) or 0)} cache read",
+                    f"{int(getattr(usage, 'cache_write_tokens', 0) or 0)} cache write",
+                ]
+                reasoning = int(getattr(usage, "reasoning_tokens", 0) or 0)
+                if reasoning:
+                    token_bits.append(f"{reasoning} reasoning")
+                lines.append(
+                    f"  {model}: {calls} calls; {format_ai_credits(model_credits)} credits; "
+                    f"{', '.join(token_bits)}"
                 )
 
         return "\n".join(lines)
