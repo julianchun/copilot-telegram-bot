@@ -527,7 +527,8 @@ class SessionMixin:
             self._chat_lock.release()
 
     def _permission_kind(self, request: Any) -> str:
-        return str(metadata_value(request, "kind", default="unknown"))
+        raw_kind = metadata_value(request, "kind", default="unknown")
+        return str(getattr(raw_kind, "value", raw_kind)).lower()
 
     def _permission_path_is_allowed(self, path_value: Any) -> bool:
         if not path_value:

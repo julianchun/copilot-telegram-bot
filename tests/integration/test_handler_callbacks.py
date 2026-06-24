@@ -434,3 +434,23 @@ async def test_handle_plan_callback_approve_requires_active_session(
         "⚠️ No active session. Cannot resolve plan request."
     )
     assert mock_service._pending_exit_plan_mode == {"request_id": "req-1"}
+
+
+async def test_handle_plan_callback_resolution_error_hides_exception_details(
+    mock_callback_query, mock_context, mock_service
+):
+    """RPC errors are logged but not echoed back to Telegram users."""
+    mock_callback_query.data = "plan:approve:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    mock_service.session = MagicMock()
+    mock_service.session.rpc.ui.handle_pending_exit_plan_mode = AsyncMock(
+        side_effect=RuntimeError("secret-token")
+    )
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    text = mock_callback_query.edit_message_text.await_args.args[0]
+    assert "Failed to resolve plan request" in text
+    assert "secret-token" not in text

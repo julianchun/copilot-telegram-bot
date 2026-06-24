@@ -199,6 +199,25 @@ class TestPermissionRequestBridge:
         assert isinstance(result, PermissionDecisionApproveOnce)
         svc.interaction_callback.assert_awaited_once()
 
+    async def test_permission_kind_normalizes_enum_like_values(self):
+        class PermissionKind:
+            value = "URL"
+
+            def __str__(self):
+                return "PermissionKind.URL"
+
+        svc = FakeService()
+        svc.allow_all_tools = True
+        svc.interaction_callback = AsyncMock(return_value=True)
+
+        result = await svc._permission_request_bridge(
+            SimpleNamespace(kind=PermissionKind(), url="https://example.com"),
+            MagicMock(),
+        )
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+        svc.interaction_callback.assert_awaited_once()
+
 
 # ── MCP config normalization ─────────────────────────────────────────
 

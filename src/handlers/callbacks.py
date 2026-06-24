@@ -566,7 +566,9 @@ async def _handle_plan_callback(query, context):
                 )
         except Exception as e:
             logger.error(f"❌ Failed to resolve exit plan request: {e}", exc_info=True)
-            await query.edit_message_text(f"⚠️ Failed to resolve plan request: {e}")
+            await query.edit_message_text(
+                "⚠️ Failed to resolve plan request. Please try again or send a new message."
+            )
             return
 
         service._pending_exit_plan_mode = None
