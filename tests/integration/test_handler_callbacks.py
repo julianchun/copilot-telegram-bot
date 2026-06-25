@@ -1,6 +1,7 @@
 """Integration tests for callback handlers in src/handlers/callbacks.py."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,17 +50,17 @@ async def test_button_handler_security_check_fails(mock_update_with_query, mock_
 
 
 async def test_button_handler_routes_model(mock_update_with_query, mock_context, mock_service):
-    """data='model:gpt-4.1' routes to _handle_model_callback."""
-    mock_update_with_query.callback_query.data = "model:gpt-4.1"
+    """data='model:gpt-5.4' routes to _handle_model_callback."""
+    mock_update_with_query.callback_query.data = "model:gpt-5.4"
     mock_service._models_cache = []
 
     from src.handlers.callbacks import button_handler
 
     await button_handler(mock_update_with_query, mock_context)
 
-    mock_service.change_model.assert_awaited_once_with("gpt-4.1")
+    mock_service.change_model.assert_awaited_once_with("gpt-5.4")
     msg = mock_update_with_query.callback_query.edit_message_text.call_args.args[0]
-    assert "gpt-4.1" in msg
+    assert "gpt-5.4" in msg
 
 
 async def test_button_handler_routes_project(
@@ -68,6 +69,7 @@ async def test_button_handler_routes_project(
     """data='proj:myproject' routes to _handle_project_callback."""
     mock_update_with_query.callback_query.data = "proj:myproject"
     mock_service.set_working_directory = AsyncMock()
+    mock_service.get_cockpit_message = AsyncMock(return_value="cockpit")
     (tmp_path / "myproject").mkdir()
 
     with patch(f"{MODULE}.WORKSPACE_PATH", tmp_path):
@@ -77,6 +79,12 @@ async def test_button_handler_routes_project(
 
     mock_service.set_working_directory.assert_awaited_once()
     mock_service.get_cockpit_message.assert_awaited_once()
+    mock_update_with_query.callback_query.message.delete.assert_awaited_once()
+    mock_update_with_query.callback_query.edit_message_text.assert_not_awaited()
+    mock_context.bot.send_message.assert_awaited_once_with(
+        chat_id=mock_update_with_query.callback_query.message.chat_id,
+        text="cockpit",
+    )
 
 
 # --- _build_project_selected_message ---
@@ -108,16 +116,16 @@ async def test_handle_model_callback_changes_model(
     mock_callback_query, mock_context, mock_service
 ):
     """Calls service.change_model for a model without reasoning support."""
-    mock_callback_query.data = "model:gpt-4.1"
-    mock_service._models_cache = [{"id": "gpt-4.1", "supports_reasoning": False}]
+    mock_callback_query.data = "model:gpt-5.4"
+    mock_service._models_cache = [{"id": "gpt-5.4", "supports_reasoning": False}]
 
     from src.handlers.callbacks import _handle_model_callback
 
     await _handle_model_callback(mock_callback_query, mock_context)
 
-    mock_service.change_model.assert_awaited_once_with("gpt-4.1")
+    mock_service.change_model.assert_awaited_once_with("gpt-5.4")
     msg = mock_callback_query.edit_message_text.call_args.args[0]
-    assert "gpt-4.1" in msg
+    assert "gpt-5.4" in msg
 
 
 async def test_handle_model_callback_cancel_does_not_change_model(
@@ -267,6 +275,14 @@ async def test_handle_interaction_callback_input_page_rerenders_paginated_menu(
 # --- _handle_plan_callback ---
 
 
+def _mock_exit_plan_rpc(mock_service, *, success=True):
+    mock_service.session = MagicMock()
+    mock_service.session.rpc.ui.handle_pending_exit_plan_mode = AsyncMock(
+        return_value=SimpleNamespace(success=success)
+    )
+    return mock_service.session.rpc.ui.handle_pending_exit_plan_mode
+
+
 async def test_handle_plan_callback_stale_request_is_blocked(
     mock_callback_query, mock_context, mock_service
 ):
@@ -307,11 +323,16 @@ async def test_handle_plan_callback_reject_allows_through_when_no_pending_state(
     """Callbacks still work after restart when no pending state is stored."""
     mock_callback_query.data = "plan:reject:req-1"
     mock_service._pending_exit_plan_mode = None
+    rpc = _mock_exit_plan_rpc(mock_service)
 
     from src.handlers.callbacks import _handle_plan_callback
 
     await _handle_plan_callback(mock_callback_query, mock_context)
 
+    request = rpc.await_args.args[0]
+    assert request.request_id == "req-1"
+    assert request.response.approved is False
+    assert request.response.feedback == "Plan rejected by user."
     assert mock_service._pending_exit_plan_mode is None
     assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
 
@@ -322,11 +343,15 @@ async def test_handle_plan_callback_reject_clears_pending_state(
     """Rejecting a plan clears the stored pending request."""
     mock_callback_query.data = "plan:reject:req-1"
     mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    rpc = _mock_exit_plan_rpc(mock_service)
 
     from src.handlers.callbacks import _handle_plan_callback
 
     await _handle_plan_callback(mock_callback_query, mock_context)
 
+    request = rpc.await_args.args[0]
+    assert request.response.approved is False
+    assert request.response.feedback == "Plan rejected by user."
     assert mock_service._pending_exit_plan_mode is None
     assert "Plan rejected" in mock_callback_query.edit_message_text.call_args.args[0]
 
@@ -337,33 +362,59 @@ async def test_handle_plan_callback_edit_clears_pending_state(
     """Requesting a plan edit clears the stored pending request."""
     mock_callback_query.data = "plan:edit:req-1"
     mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    rpc = _mock_exit_plan_rpc(mock_service)
 
     from src.handlers.callbacks import _handle_plan_callback
 
     await _handle_plan_callback(mock_callback_query, mock_context)
 
+    request = rpc.await_args.args[0]
+    assert request.response.approved is False
+    assert request.response.feedback == "User wants to revise the plan."
     assert mock_service._pending_exit_plan_mode is None
     assert "Plan edit requested" in mock_callback_query.edit_message_text.call_args.args[0]
 
 
-async def test_handle_plan_callback_approve_uses_service_set_mode(
+async def test_handle_plan_callback_approve_uses_pending_ui_rpc(
     mock_callback_query, mock_context, mock_service
 ):
-    """Approving a plan goes through service.set_mode instead of direct RPC."""
+    """Approving a plan resolves the pending v1 UI request."""
     mock_callback_query.data = "plan:approve:req-1"
-    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
-    mock_service.session = MagicMock()
-    mock_service.session.rpc.mode.set = AsyncMock()
+    mock_service._pending_exit_plan_mode = {
+        "request_id": "req-1",
+        "actions": ["interactive", "autopilot"],
+        "recommended_action": "autopilot",
+    }
     mock_service.set_mode = AsyncMock(return_value=True)
+    rpc = _mock_exit_plan_rpc(mock_service)
 
     from src.handlers.callbacks import _handle_plan_callback
 
     await _handle_plan_callback(mock_callback_query, mock_context)
 
-    mock_service.set_mode.assert_awaited_once_with("interactive")
-    mock_service.session.rpc.mode.set.assert_not_awaited()
+    mock_service.set_mode.assert_not_awaited()
+    request = rpc.await_args.args[0]
+    assert request.request_id == "req-1"
+    assert request.response.approved is True
+    assert request.response.selected_action.value == "autopilot"
     assert "Plan approved" in mock_callback_query.edit_message_text.call_args.args[0]
     assert mock_service._pending_exit_plan_mode is None
+
+
+async def test_handle_plan_callback_approve_success_false_shows_expired(
+    mock_callback_query, mock_context, mock_service
+):
+    """The UI does not claim approval when the SDK says the request is stale."""
+    mock_callback_query.data = "plan:approve:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    _mock_exit_plan_rpc(mock_service, success=False)
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    assert mock_service._pending_exit_plan_mode is None
+    assert "expired or was already handled" in mock_callback_query.edit_message_text.call_args.args[0]
 
 
 async def test_handle_plan_callback_approve_requires_active_session(
@@ -380,6 +431,26 @@ async def test_handle_plan_callback_approve_requires_active_session(
 
     mock_service.set_mode.assert_not_awaited()
     mock_callback_query.edit_message_text.assert_awaited_once_with(
-        "⚠️ No active session. Cannot switch mode."
+        "⚠️ No active session. Cannot resolve plan request."
     )
-    assert mock_service._pending_exit_plan_mode is None
+    assert mock_service._pending_exit_plan_mode == {"request_id": "req-1"}
+
+
+async def test_handle_plan_callback_resolution_error_hides_exception_details(
+    mock_callback_query, mock_context, mock_service
+):
+    """RPC errors are logged but not echoed back to Telegram users."""
+    mock_callback_query.data = "plan:approve:req-1"
+    mock_service._pending_exit_plan_mode = {"request_id": "req-1"}
+    mock_service.session = MagicMock()
+    mock_service.session.rpc.ui.handle_pending_exit_plan_mode = AsyncMock(
+        side_effect=RuntimeError("secret-token")
+    )
+
+    from src.handlers.callbacks import _handle_plan_callback
+
+    await _handle_plan_callback(mock_callback_query, mock_context)
+
+    text = mock_callback_query.edit_message_text.await_args.args[0]
+    assert "Failed to resolve plan request" in text
+    assert "secret-token" not in text

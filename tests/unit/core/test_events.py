@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
-from copilot.generated.session_events import SessionEventType
+from copilot.generated.session_events import ExitPlanModeAction, SessionEventType
+from copilot.generated.rpc import SessionMode
 
 from src.core.events import EventHandlerMixin
 
@@ -19,7 +20,7 @@ class FakeService(EventHandlerMixin):
         self.current_callback = None
         self._tool_call_names = {}
         self.completion_callback = None
-        self.current_model = "gpt-4.1"
+        self.current_model = "gpt-5.4"
         self.current_agent = None
         self.last_assistant_usage = None
         self.last_session_usage = None
@@ -36,8 +37,7 @@ def _make_event(event_type, **data_attrs):
     """Build a mock event with the given type and data attributes."""
     event = MagicMock()
     event.type = event_type
-    for k, v in data_attrs.items():
-        setattr(event.data, k, v)
+    event.data = SimpleNamespace(**data_attrs)
     return event
 
 
@@ -160,7 +160,31 @@ class TestExitPlanModeRequested:
             "request_id": "req-1",
             "plan_content": "- Step 1",
             "summary": "Summary",
+            "actions": ["approve", "edit"],
+            "recommended_action": "approve",
         }
+        svc.telegram_bot.send_message.assert_awaited_once()
+
+    @patch("src.ui.menus.get_exit_plan_mode_keyboard", return_value="keyboard")
+    async def test_finalize_displays_v1_enum_actions(self, _mock_keyboard):
+        svc = FakeService()
+        svc.telegram_bot = MagicMock()
+        svc.telegram_bot.send_message = AsyncMock()
+        svc.telegram_chat_id = 123
+
+        data = SimpleNamespace(
+            request_id="req-1",
+            summary="Summary",
+            plan_content="- Step 1",
+            actions=[ExitPlanModeAction.INTERACTIVE, ExitPlanModeAction.AUTOPILOT],
+            recommended_action=ExitPlanModeAction.INTERACTIVE,
+        )
+
+        await svc._finalize_exit_plan_mode_requested(data)
+
+        text = svc.telegram_bot.send_message.await_args.kwargs["text"]
+        assert "recommended: interactive" in text
+        assert "Actions: interactive, autopilot" in text
         svc.telegram_bot.send_message.assert_awaited_once()
 
     @patch("src.ui.menus.get_exit_plan_mode_keyboard", return_value="keyboard")
@@ -181,6 +205,34 @@ class TestExitPlanModeRequested:
 
         assert svc._pending_exit_plan_mode is None
         svc.telegram_bot.send_message.assert_not_awaited()
+
+
+class TestOnSessionStart:
+    def test_v1_metadata_aliases_are_stored(self):
+        svc = FakeService()
+        event = _make_event(
+            SessionEventType.SESSION_START,
+            session_id="session-123",
+            selected_model="gpt-5",
+            copilot_version="1.0.0",
+            producer="copilot",
+            git_root="/repo",
+            context=SimpleNamespace(
+                working_directory="/repo/app",
+                branch="feature",
+                repository="owner/repo",
+            ),
+        )
+
+        svc._on_session_start(event)
+
+        assert svc.session_info.session_id == "session-123"
+        assert svc.session_info.selected_model == "gpt-5"
+        assert svc.session_info.copilot_version == "1.0.0"
+        assert svc.session_info.cwd == "/repo/app"
+        assert svc.session_info.branch == "feature"
+        assert svc.session_info.git_root == "/repo"
+        assert svc.current_model == "gpt-5"
 
 
 class TestOnToolStart:
@@ -326,20 +378,28 @@ class TestOnAssistantUsage:
 
     def test_no_model_field_keeps_current(self):
         svc = FakeService()
-        svc.current_model = "gpt-4.1"
+        svc.current_model = "gpt-5.4"
 
         event = MagicMock()
         event.type = SessionEventType.ASSISTANT_USAGE
         event.data = MagicMock(spec=[])  # spec=[] → no attributes
         svc._on_assistant_usage(event)
 
-        assert svc.current_model == "gpt-4.1"
+        assert svc.current_model == "gpt-5.4"
 
 
 class TestOnSessionModeChanged:
     def test_updates_current_mode(self):
         svc = FakeService()
         event = _make_event(SessionEventType.SESSION_MODE_CHANGED, new_mode="plan")
+
+        svc._on_session_mode_changed(event)
+
+        assert svc.current_mode == "plan"
+
+    def test_updates_current_mode_from_v1_enum(self):
+        svc = FakeService()
+        event = _make_event(SessionEventType.SESSION_MODE_CHANGED, new_mode=SessionMode.PLAN)
 
         svc._on_session_mode_changed(event)
 

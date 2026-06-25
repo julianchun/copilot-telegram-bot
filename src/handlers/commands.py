@@ -296,7 +296,8 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_project_selected(update): return
     from src.ui.menus import get_model_menu
     msg = await update.message.reply_text("🔄 Fetching models...")
-    text, keyboard = get_model_menu(await service.get_available_models(), current_model=service.current_model)
+    current_model = service.get_display_model() if hasattr(service, "get_display_model") else service.current_model
+    text, keyboard = get_model_menu(await service.get_available_models(), current_model=current_model)
     await msg.edit_text(text, reply_markup=keyboard)
 
 async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -493,7 +494,7 @@ async def _session_info(update: Update):
 
     uptime_str = session_info.duration()
 
-    model = service.user_selected_model or service.current_model or "Auto"
+    model = service.get_display_model() if hasattr(service, "get_display_model") else (service.user_selected_model or service.current_model or "Auto")
     mode_labels = {"interactive": "Chat", "plan": "Planning", "autopilot": "Autopilot"}
     mode = mode_labels.get(service.current_mode, "Chat")
     status = "Expired" if service.session_expired else "Active"
@@ -503,8 +504,6 @@ async def _session_info(update: Update):
 
     cwd = session_info.cwd or str(ctx.root_path)
     branch = session_info.branch or "N/A"
-
-    total_requests = sum(u.requests for u in tracker.model_usage.values())
 
     agent_line = f"• Agent: {service.current_agent}\n" if service.current_agent else ""
 
@@ -517,7 +516,6 @@ async def _session_info(update: Update):
         f"• Model: {model}\n"
         f"• Mode: {mode}\n"
         f"{agent_line}"
-        f"• Total Requests: {total_requests}\n"
         f"\n📂 Workspace\n"
         f"• Project: {service.project_name or Path(cwd).name}\n"
         f"• Path: {cwd}\n"
@@ -537,7 +535,8 @@ async def _session_info(update: Update):
     if quota_summary:
         msg += f"\n💳 Quota Status:\n{quota_summary}\n"
 
-    usage_summary = await tracker.get_usage_summary()
+    account_quota = await service.get_account_quota() if hasattr(service, "get_account_quota") else None
+    usage_summary = await tracker.get_usage_summary(account_quota=account_quota)
     msg += f"\n📊 Usage Summary:\n{usage_summary}\n"
 
     await update.message.reply_text(msg)
@@ -658,7 +657,7 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 async def allowall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Toggle auto-approve for all tool permissions."""
+    """Toggle auto-approve for non-URL SDK permission requests."""
     if not await security_check(update): return
     if not await check_project_selected(update): return
 
@@ -667,12 +666,12 @@ async def allowall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if service.allow_all_tools:
         await update.message.reply_text(
             "🔓 Allow All: ON\n"
-            "All tool permissions auto-approved for this session."
+            "Non-URL permission requests auto-approved for this session."
         )
     else:
         await update.message.reply_text(
             "🔒 Allow All: OFF\n"
-            "Non-allowlisted tools will require approval."
+            "Permission requests will require approval when they are not safe reads."
         )
 
 async def instructions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

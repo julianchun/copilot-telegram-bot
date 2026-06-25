@@ -251,11 +251,11 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         except asyncio.TimeoutError:
             logger.error(f"⏱️ Interaction {interaction_id} timed out")
             PENDING_INTERACTIONS.pop(interaction_id, None)
-            return False if kind == "permission" else "cancel"
+            return None if kind == "permission" else "cancel"
         except Exception as e:
             logger.error(f"❌ Interaction {interaction_id} failed: {e}", exc_info=True)
             PENDING_INTERACTIONS.pop(interaction_id, None)
-            return False if kind == "permission" else "cancel"
+            return None if kind == "permission" else "cancel"
 
     # ---- Execute chat ----
 
@@ -281,14 +281,14 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, overr
         # Build footer
         footer = ""
         try:
-            project, model, cost = service.get_usage_metadata()
+            project, model = service.get_usage_metadata()
             git = await service.get_git_info()
             mode_labels = {"interactive": "Chat", "plan": "Planning", "autopilot": "Autopilot"}
             mode_label = mode_labels.get(service.current_mode, "Chat")
             parts = [f"📂 {project}"]
             if git:
                 parts.append(f"🔀 {git[1:]}")
-            parts.append(f"🤖 {model} ({cost}x)")
+            parts.append(f"🤖 {model}")
             parts.append(f"⚙️ Mode: {mode_label}")
             if service.current_agent:
                 parts.append(f"🤖 Agent: {service.current_agent}")

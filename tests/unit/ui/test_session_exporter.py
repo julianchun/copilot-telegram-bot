@@ -25,7 +25,7 @@ def _metadata(**overrides):
         "session_id": "test-123",
         "start_time": datetime(2025, 1, 15, 10, 0, 0),
         "project_name": "test",
-        "current_model": "gpt-4.1",
+        "current_model": "gpt-5.4",
     }
     base.update(overrides)
     return base
@@ -66,9 +66,9 @@ class TestFormatFiltersEphemeral:
 
 class TestFormatSessionStart:
     def test_format_session_start(self):
-        events = [make_event(SessionEventType.SESSION_START, selected_model="gpt-4.1")]
+        events = [make_event(SessionEventType.SESSION_START, selected_model="gpt-5.4")]
         result = format_session_markdown(events, _metadata())
-        assert "Session started with model: gpt-4.1" in result
+        assert "Session started with model: gpt-5.4" in result
 
 
 class TestFormatToolExecution:

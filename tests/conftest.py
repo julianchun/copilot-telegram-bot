@@ -92,7 +92,7 @@ def mock_service():
     svc.project_selected = True
     svc.session = MagicMock()
     svc.session_id = "test-1234"
-    svc.current_model = "gpt-4.1"
+    svc.current_model = "gpt-5.4"
     svc.current_mode = "interactive"
     svc.current_agent = None
     svc._is_running = True
@@ -110,6 +110,7 @@ def mock_service():
     svc.deselect_agent = AsyncMock(return_value=True)
     svc.reload_agents = AsyncMock(return_value=[])
     svc.get_usage_report = AsyncMock(return_value="usage report")
+    svc.get_account_quota = AsyncMock(return_value=None)
     svc.get_session_info = MagicMock()
     svc.get_working_directory = MagicMock(return_value="/tmp/workspace")
     svc.get_git_info = AsyncMock(return_value="@main")
@@ -122,7 +123,8 @@ def mock_service():
     svc.export_session_to_file = AsyncMock(return_value="/tmp/export.md")
     svc.get_cli_version = AsyncMock(return_value="1.0.0")
     svc.get_auth_status = AsyncMock(return_value="testuser")
-    svc.get_usage_metadata = MagicMock(return_value=("project", "gpt-4.1", 0.0))
+    svc.get_display_model = MagicMock(return_value="gpt-5.4")
+    svc.get_usage_metadata = MagicMock(return_value=("project", "gpt-5.4"))
 
     svc.usage_tracker = MagicMock()
     svc.usage_tracker.get_usage_summary = AsyncMock(return_value="summary")
@@ -133,7 +135,7 @@ def mock_service():
 
     svc.session_info = MagicMock()
     svc.session_info.session_id = "test-1234"
-    svc.session_info.selected_model = "gpt-4.1"
+    svc.session_info.selected_model = "gpt-5.4"
     svc.session_info.cwd = "/tmp/workspace"
     svc.session_info.branch = "main"
     svc.session_info.duration.return_value = "5m 30s"

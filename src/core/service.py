@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Callable, Any, Dict
 
-from copilot import CopilotClient, SubprocessConfig
+from copilot import CopilotClient, RuntimeConnection
 
 from src.config import (
     WORKSPACE_PATH,
@@ -96,10 +96,11 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     def _build_client(self, cwd: Path | str | None = None) -> CopilotClient:
         """Create a Copilot client managed by the bot subprocess."""
-        return CopilotClient(SubprocessConfig(
-            cwd=str(cwd or ctx.root_path),
+        return CopilotClient(
+            working_directory=str(cwd or ctx.root_path),
             github_token=GITHUB_TOKEN or None,
-        ))
+            connection=RuntimeConnection.for_stdio(),
+        )
 
     # ── Working directory ─────────────────────────────────────────────
 
@@ -176,40 +177,67 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     # ── Usage / metadata ──────────────────────────────────────────────
 
-    def get_usage_metadata(self) -> tuple[str, str, str]:
-        """Returns (project, model, cost) tuple for footer construction."""
+    def get_display_model(self) -> str:
+        """Return the concrete current model when known, otherwise Auto."""
+        if self.last_assistant_usage:
+            usage_model = getattr(self.last_assistant_usage, "model", None)
+            if usage_model:
+                return str(usage_model)
+        selected_model = getattr(self.session_info, "selected_model", None)
+        if selected_model:
+            return str(selected_model)
+        if self.current_model:
+            return str(self.current_model)
+        return "Auto"
+
+    def get_usage_metadata(self) -> tuple[str, str]:
+        """Returns (project, model) tuple for footer construction."""
         try:
             if self.session_info.cwd:
                 project = Path(self.session_info.cwd).name
             else:
                 project = self.project_name or Path(ctx.root_path).name
 
-            model = "Auto"
-            cost = "0.0"
-
-            if self.last_assistant_usage:
-                if hasattr(self.last_assistant_usage, 'model') and self.last_assistant_usage.model:
-                    model = self.last_assistant_usage.model
-                elif self.current_model:
-                    model = self.current_model
-                if hasattr(self.last_assistant_usage, 'cost') and self.last_assistant_usage.cost is not None:
-                    cost = f"{self.last_assistant_usage.cost:.2f}"
-            elif self.current_model:
-                model = self.current_model
-
-            return project, model, cost
+            return project, self.get_display_model()
         except Exception as e:
             logger.error(f"get_usage_metadata failed: {e}")
-            return "Unknown", "Auto", "0.0"
+            return "Unknown", "Auto"
+
+    async def get_sdk_usage_metrics(self) -> Any | None:
+        """Return SDK-reported session usage metrics, if available."""
+        if not self.session:
+            return None
+        try:
+            return await self.session.rpc.usage.get_metrics(timeout=3)
+        except Exception as e:
+            logger.debug(f"SDK usage metrics unavailable: {e}")
+            return None
+
+    async def get_account_quota(self) -> Any | None:
+        """Return account quota snapshots, if the SDK runtime exposes them."""
+        if not self._is_running:
+            return None
+        try:
+            from copilot.generated.rpc import AccountGetQuotaRequest
+
+            return await self.client.rpc.account.get_quota(
+                AccountGetQuotaRequest(git_hub_token=GITHUB_TOKEN or None),
+                timeout=3,
+            )
+        except Exception as e:
+            logger.debug(f"SDK account quota unavailable: {e}")
+            return None
 
     async def get_usage_report(self) -> str:
-        """Returns formatted usage stats from the accumulated SessionUsageTracker."""
-        return await self.usage_tracker.get_usage_summary()
+        """Returns formatted usage stats from SDK metrics with event fallback."""
+        metrics = await self.get_sdk_usage_metrics()
+        account_quota = await self.get_account_quota()
+        return await self.usage_tracker.get_usage_summary(metrics, account_quota)
 
     # ── Session export ────────────────────────────────────────────────
 
     async def export_session_to_file(self) -> Optional[str]:
-        """Exports the current session history to a markdown file using SDK get_messages()."""
+        """Exports the current session history to a markdown file using SDK get_events()."""
         if not self.session:
             logger.warning("No active session to export")
             return None
@@ -218,7 +246,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             from src.ui.session_exporter import format_session_markdown
 
             logger.info("📥 Retrieving session history...")
-            events = await self.session.get_messages()
+            events = await self.session.get_events()
 
             if not events:
                 logger.warning("Session has no events to export")
@@ -331,17 +359,6 @@ class CopilotService(EventHandlerMixin, SessionMixin):
             results = []
             for m in models:
                 mid = str(m.id) if hasattr(m, 'id') else str(m)
-                mult = "1x"
-                if hasattr(m, 'billing') and hasattr(m.billing, 'multiplier'):
-                    multiplier_val = m.billing.multiplier
-                    if isinstance(multiplier_val, (int, float)):
-                        if multiplier_val == int(multiplier_val):
-                            mult = f"{int(multiplier_val)}x"
-                        else:
-                            mult = f"{multiplier_val}x"
-                    else:
-                        mult = f"{multiplier_val}x"
-
                 # Cache context window limit from SDK capabilities
                 if hasattr(m, 'capabilities') and hasattr(m.capabilities, 'limits'):
                     ctx_tokens = getattr(m.capabilities.limits, 'max_context_window_tokens', None)
@@ -356,7 +373,6 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
                 results.append({
                     "id": mid,
-                    "multiplier": mult,
                     "supports_reasoning": supports_reasoning,
                     "supported_efforts": supported_efforts,
                     "default_effort": default_effort,
@@ -387,7 +403,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
 
     async def get_project_info_header(self) -> str:
         """Build rich project info header with model, mode, path, branch, and structure."""
-        model = self.user_selected_model or self.current_model or "Auto"
+        model = self.get_display_model()
         mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_labels.get(self.current_mode, "Chat")
         agent_line = f"🤖 Agent: {self.current_agent}\n" if self.current_agent else ""
@@ -410,7 +426,7 @@ class CopilotService(EventHandlerMixin, SessionMixin):
     async def get_cockpit_message(self) -> str:
         """Build the cockpit message shown after project selection."""
         from src.ui.menus import get_cockpit_content
-        model = self.user_selected_model or self.current_model or "Auto"
+        model = self.get_display_model()
         mode_labels = {"interactive": "Chat", "plan": "Plan", "autopilot": "Autopilot"}
         mode = mode_labels.get(self.current_mode, "Chat")
         display_cwd = self.session_info.cwd or str(ctx.root_path)
